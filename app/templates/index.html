@@ -4,7 +4,7 @@
     <title>DDNS Editor</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
 </head>
-<body class="container mt-5" style="max-width: 700px;">
+<body class="container mt-5" style="max-width: 820px;">
     <h1>DDNS Configuration Editor</h1>
     <p class="text-muted">Manages ddns-updater's config.json. This is a simple companion tool -- for update status/history, see ddns-updater's own dashboard on port 8000.</p>
 
@@ -18,7 +18,15 @@
 
     <ul class="nav nav-tabs" id="editorTabs" role="tablist">
         <li class="nav-item" role="presentation">
-            <button class="nav-link active" id="simple-tab" data-bs-toggle="tab" data-bs-target="#simple" type="button" role="tab">Simple Setup</button>
+            <button class="nav-link {% if not is_editing %}active{% endif %}" id="records-tab" data-bs-toggle="tab" data-bs-target="#records" type="button" role="tab">
+                Configured Records
+                {% if records %}<span class="badge text-bg-secondary">{{ records|length }}</span>{% endif %}
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link {% if is_editing %}active{% endif %}" id="add-tab" data-bs-toggle="tab" data-bs-target="#add" type="button" role="tab">
+                {% if is_editing %}Edit Record{% else %}Add Record{% endif %}
+            </button>
         </li>
         <li class="nav-item" role="presentation">
             <button class="nav-link" id="advanced-tab" data-bs-toggle="tab" data-bs-target="#advanced" type="button" role="tab">Advanced (Raw JSON)</button>
@@ -26,31 +34,83 @@
     </ul>
 
     <div class="tab-content border border-top-0 p-4" id="editorTabsContent">
-        <!-- Simple Setup -->
-        <div class="tab-pane fade show active" id="simple" role="tabpanel">
-            {% if config.settings and not is_supported_provider %}
+
+        <!-- Configured Records -->
+        <div class="tab-pane fade {% if not is_editing %}show active{% endif %}" id="records" role="tabpanel">
+            {% if not records %}
+                <p class="text-muted mb-0">No DNS records configured yet. Switch to the <strong>Add Record</strong> tab to create one.</p>
+            {% else %}
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>Domain</th>
+                            <th>Provider</th>
+                            <th>Details</th>
+                            <th class="text-end">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for record in records %}
+                        <tr>
+                            <td><code>{{ record.entry.domain or '(no domain)' }}</code></td>
+                            <td>
+                                {% if record.entry.provider == 'cloudflare' %}
+                                    <span class="badge text-bg-warning text-dark">Cloudflare</span>
+                                {% elif record.entry.provider == 'duckdns' %}
+                                    <span class="badge text-bg-info text-dark">Duck DNS</span>
+                                {% else %}
+                                    <span class="badge text-bg-secondary">{{ record.entry.provider or 'unknown' }}</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-muted small">{{ record.summary }}</td>
+                            <td class="text-end">
+                                {% if record.entry.provider in ('cloudflare', 'duckdns') %}
+                                <a href="{{ url_for('index', edit=record.index) }}#add" class="btn btn-sm btn-outline-primary">Edit</a>
+                                {% else %}
+                                <a href="#advanced" data-bs-toggle="tab" data-bs-target="#advanced" class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('advanced-tab').click()">Edit in JSON</a>
+                                {% endif %}
+                                <form action="{{ url_for('delete_record', index=record.index) }}" method="post" class="d-inline"
+                                      onsubmit="return confirm('Delete the record for {{ record.entry.domain or "this domain" }}? This cannot be undone.');">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% endif %}
+        </div>
+
+        <!-- Add / Edit Record -->
+        <div class="tab-pane fade {% if is_editing %}show active{% endif %}" id="add" role="tabpanel">
+            {% if is_editing and not is_supported_provider %}
                 <div class="alert alert-warning">
-                    Your current config uses provider "<strong>{{ provider }}</strong>" (or multiple entries),
-                    which isn't one of the providers this simple form supports yet
-                    (Cloudflare, Duck DNS). Use the <strong>Advanced</strong> tab to edit it directly,
-                    or fill out this form to replace it with a single Cloudflare/Duck DNS entry.
+                    This record uses provider "<strong>{{ edit_provider }}</strong>", which isn't one of the
+                    providers this form supports yet (Cloudflare, Duck DNS). Use the
+                    <strong>Advanced</strong> tab to edit it directly.
                 </div>
             {% endif %}
 
-            <form action="/update_simple" method="post">
+            {% if is_editing %}
+                <p class="text-muted">Editing record for <strong>{{ edit_entry.domain }}</strong>. <a href="{{ url_for('index') }}">Cancel and add a new record instead</a>.</p>
+            {% endif %}
+
+            <form action="{{ url_for('save_record') }}" method="post">
+                <input type="hidden" name="index" value="{{ edit_index }}">
+
                 <div class="mb-3">
                     <label class="form-label">DNS Provider</label>
                     <select class="form-select" name="provider" id="providerSelect" onchange="toggleProviderFields()">
                         <option value="">-- Select a provider --</option>
-                        <option value="cloudflare" {% if provider == 'cloudflare' %}selected{% endif %}>Cloudflare</option>
-                        <option value="duckdns" {% if provider == 'duckdns' %}selected{% endif %}>Duck DNS</option>
+                        <option value="cloudflare" {% if edit_provider == 'cloudflare' %}selected{% endif %}>Cloudflare</option>
+                        <option value="duckdns" {% if edit_provider == 'duckdns' %}selected{% endif %}>Duck DNS</option>
                     </select>
                 </div>
 
                 <div class="mb-3">
                     <label class="form-label">Domain / subdomain to keep updated</label>
                     <input type="text" class="form-control" name="domain" placeholder="home.example.com"
-                           value="{{ first.domain or '' }}">
+                           value="{{ edit_entry.domain or '' }}">
                 </div>
 
                 <div id="cloudflareFields" style="display: none;">
@@ -59,21 +119,21 @@
                     <div class="mb-3">
                         <label class="form-label">Zone ID</label>
                         <input type="text" class="form-control" name="zone_identifier"
-                               value="{{ first.zone_identifier or '' }}">
+                               value="{{ edit_entry.zone_identifier or '' }}">
                     </div>
                     <div class="mb-3">
                         <label class="form-label">API Token (Zone:DNS:Edit scope)</label>
                         <input type="password" class="form-control" name="token"
-                               placeholder="{% if first.provider == 'cloudflare' %}leave blank to keep the existing token{% endif %}"
+                               placeholder="{% if edit_provider == 'cloudflare' %}leave blank to keep the existing token{% endif %}"
                                value="">
                     </div>
                     <div class="mb-3">
                         <label class="form-label">TTL (seconds)</label>
-                        <input type="number" class="form-control" name="ttl" value="{{ first.ttl or 300 }}">
+                        <input type="number" class="form-control" name="ttl" value="{{ edit_entry.ttl or 300 }}">
                     </div>
                     <div class="form-check mb-3">
                         <input class="form-check-input" type="checkbox" name="proxied" id="proxiedCheck"
-                               {% if first.proxied %}checked{% endif %}>
+                               {% if edit_entry.proxied %}checked{% endif %}>
                         <label class="form-check-label" for="proxiedCheck">Proxy through Cloudflare (orange cloud)</label>
                     </div>
                 </div>
@@ -84,12 +144,15 @@
                     <div class="mb-3">
                         <label class="form-label">Token</label>
                         <input type="password" class="form-control" name="token"
-                               placeholder="{% if first.provider == 'duckdns' %}leave blank to keep the existing token{% endif %}"
+                               placeholder="{% if edit_provider == 'duckdns' %}leave blank to keep the existing token{% endif %}"
                                value="">
                     </div>
                 </div>
 
-                <button type="submit" class="btn btn-primary">Save Configuration</button>
+                <button type="submit" class="btn btn-primary">{% if is_editing %}Save Changes{% else %}Add Record{% endif %}</button>
+                {% if is_editing %}
+                <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">Cancel</a>
+                {% endif %}
             </form>
         </div>
 
@@ -113,8 +176,6 @@
             document.getElementById('cloudflareFields').style.display = (provider === 'cloudflare') ? 'block' : 'none';
             document.getElementById('duckdnsFields').style.display = (provider === 'duckdns') ? 'block' : 'none';
         }
-        // Show the right fields on page load too, in case a provider is
-        // already pre-selected from the existing config.
         toggleProviderFields();
     </script>
 </body>
