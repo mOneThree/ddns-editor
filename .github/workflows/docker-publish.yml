@@ -14,7 +14,7 @@ on:
   workflow_dispatch: {}
 
 env:
-  IMAGE_NAME: yourusername/ddns-editor   # <-- replace "yourusername" with your Docker Hub namespace
+  IMAGE_NAME: mthirteenz/ddns-editor
 
 jobs:
   build-and-push:
@@ -41,8 +41,7 @@ jobs:
           TAGS="${IMAGE_NAME}:latest"
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/v}"
-            TAGS="${TAGS}
-${IMAGE_NAME}:${VERSION}"
+            TAGS="${TAGS}"$'\n'"${IMAGE_NAME}:${VERSION}"
           fi
           {
             echo "tags<<EOF"
@@ -56,4 +55,4 @@ ${IMAGE_NAME}:${VERSION}"
           context: ./ddns-editor
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}  
+          tags: ${{ steps.meta.outputs.tags }}
