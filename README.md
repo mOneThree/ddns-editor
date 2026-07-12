@@ -19,15 +19,11 @@ It's built to sit alongside `ddns-updater` in the same Docker Compose stack, sha
 - **Health check endpoint** — `GET /healthz` for container orchestrators / uptime monitors.
 - **Multi-arch image** — published for `linux/amd64` and `linux/arm64`, so it runs on a Raspberry Pi as happily as a NAS or VM.
 
-## Screenshots
-
-*(add a screenshot of the Simple and Advanced tabs here once you have one)*
-
 ---
 
 ## Quick start
 
-The easiest way to run this is alongside `ddns-updater` itself, sharing a config volume:
+Run alongside `ddns-updater` itself, sharing a config volume:
 
 ```yaml
 version: '3.8'
@@ -66,7 +62,7 @@ docker network create homelab_network   # skip if it already exists
 docker compose up -d
 ```
 
-Then open **http://localhost:5001**. `ddns-updater`'s own status page is on port `8000`.
+Then open **http://localhost:5001**.
 
 > After saving a config change, restart `ddns-updater` (`docker restart ddns-updater`) for it to pick up the new settings.
 
@@ -76,7 +72,7 @@ Then open **http://localhost:5001**. `ddns-updater`'s own status page is on port
 
 | Environment variable | Required | Default | Description |
 |---|---|---|---|
-| `FLASK_SECRET_KEY` | No | random on each restart | Used to sign flash-message cookies. Set this if you want flash messages to survive a container restart; otherwise a fresh random key is generated each time. |
+| `FLASK_SECRET_KEY` | No | random on each restart | Used to sign flash-message cookies. Set this if you want flash messages to survive a container restart. |
 
 | Volume | Purpose |
 |---|---|
@@ -87,7 +83,7 @@ Then open **http://localhost:5001**. `ddns-updater`'s own status page is on port
 ## Building locally
 
 ```bash
-git clone <this-repo-url>
+git clone https://github.com/mOneThree/ddns-editor.git
 cd ddns-editor
 docker build -t ddns-editor:local .
 docker run -p 5001:5000 -v $(pwd)/data:/updater/data ddns-editor:local
@@ -110,9 +106,11 @@ This repo also ships a GitHub Actions workflow (`.github/workflows/docker-publis
 ## Project structure
 
 ```
-ddns-editor/
+.
 ├── Dockerfile
 ├── requirements.txt
+├── README.md
+├── .github/workflows/docker-publish.yml
 └── app/
     ├── app.py            # Flask routes: index, update_simple, update, healthz
     ├── templates/
@@ -124,7 +122,7 @@ ddns-editor/
 
 ## Security notes
 
-- This container **runs as root**. It shares a bind-mounted volume with `ddns-updater`, and pinning a non-root UID risked permission mismatches against whatever UID that image writes as. This is an acceptable trade-off for a small, internal-only homelab tool — but **do not expose this directly to the internet**. Put it behind your reverse proxy / VPN / internal network only, since it has no authentication of its own.
+- This container **runs as root**. It shares a bind-mounted volume with `ddns-updater`, and pinning a non-root UID risked permission mismatches against whatever UID that image writes as. Acceptable for a small, internal-only homelab tool — but **do not expose this directly to the internet**. Put it behind your reverse proxy / VPN / internal network only, since it has no authentication of its own.
 - API tokens (Cloudflare, Duck DNS) are stored in plaintext in `config.json`, matching `ddns-updater`'s own expectations. Treat the `data/` volume as sensitive.
 
 ---

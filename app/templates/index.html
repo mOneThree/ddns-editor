@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DDNS Editor</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+</head>
+<body class="container mt-5" style="max-width: 700px;">
+    <h1>DDNS Configuration Editor</h1>
+    <p class="text-muted">Manages ddns-updater's config.json. This is a simple companion tool -- for update status/history, see ddns-updater's own dashboard on port 8000.</p>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="alert alert-{{ category }}" role="alert">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <ul class="nav nav-tabs" id="editorTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="simple-tab" data-bs-toggle="tab" data-bs-target="#simple" type="button" role="tab">Simple Setup</button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="advanced-tab" data-bs-toggle="tab" data-bs-target="#advanced" type="button" role="tab">Advanced (Raw JSON)</button>
+        </li>
+    </ul>
+
+    <div class="tab-content border border-top-0 p-4" id="editorTabsContent">
+        <!-- Simple Setup -->
+        <div class="tab-pane fade show active" id="simple" role="tabpanel">
+            {% if config.settings and not is_supported_provider %}
+                <div class="alert alert-warning">
+                    Your current config uses provider "<strong>{{ provider }}</strong>" (or multiple entries),
+                    which isn't one of the providers this simple form supports yet
+                    (Cloudflare, Duck DNS). Use the <strong>Advanced</strong> tab to edit it directly,
+                    or fill out this form to replace it with a single Cloudflare/Duck DNS entry.
+                </div>
+            {% endif %}
+
+            <form action="/update_simple" method="post">
+                <div class="mb-3">
+                    <label class="form-label">DNS Provider</label>
+                    <select class="form-select" name="provider" id="providerSelect" onchange="toggleProviderFields()">
+                        <option value="">-- Select a provider --</option>
+                        <option value="cloudflare" {% if provider == 'cloudflare' %}selected{% endif %}>Cloudflare</option>
+                        <option value="duckdns" {% if provider == 'duckdns' %}selected{% endif %}>Duck DNS</option>
+                    </select>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Domain / subdomain to keep updated</label>
+                    <input type="text" class="form-control" name="domain" placeholder="home.example.com"
+                           value="{{ first.domain or '' }}">
+                </div>
+
+                <div id="cloudflareFields" style="display: none;">
+                    <hr>
+                    <h5>Cloudflare settings</h5>
+                    <div class="mb-3">
+                        <label class="form-label">Zone ID</label>
+                        <input type="text" class="form-control" name="zone_identifier"
+                               value="{{ first.zone_identifier or '' }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">API Token (Zone:DNS:Edit scope)</label>
+                        <input type="password" class="form-control" name="token"
+                               placeholder="{% if first.provider == 'cloudflare' %}leave blank to keep the existing token{% endif %}"
+                               value="">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">TTL (seconds)</label>
+                        <input type="number" class="form-control" name="ttl" value="{{ first.ttl or 300 }}">
+                    </div>
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" name="proxied" id="proxiedCheck"
+                               {% if first.proxied %}checked{% endif %}>
+                        <label class="form-check-label" for="proxiedCheck">Proxy through Cloudflare (orange cloud)</label>
+                    </div>
+                </div>
+
+                <div id="duckdnsFields" style="display: none;">
+                    <hr>
+                    <h5>Duck DNS settings</h5>
+                    <div class="mb-3">
+                        <label class="form-label">Token</label>
+                        <input type="password" class="form-control" name="token"
+                               placeholder="{% if first.provider == 'duckdns' %}leave blank to keep the existing token{% endif %}"
+                               value="">
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary">Save Configuration</button>
+            </form>
+        </div>
+
+        <!-- Advanced / Raw JSON -->
+        <div class="tab-pane fade" id="advanced" role="tabpanel">
+            <form action="/update" method="post">
+                <div class="mb-3">
+                    <label class="form-label">Config JSON</label>
+                    <textarea class="form-control" name="config" rows="15" spellcheck="false">{{ config | tojson(indent=4) }}</textarea>
+                    <div class="form-text">Edit the raw ddns-updater config.json below, then save. Invalid JSON will be rejected without touching the live file. See <a href="https://github.com/qdm12/ddns-updater" target="_blank">ddns-updater's docs</a> for the full provider list/schema.</div>
+                </div>
+                <button type="submit" class="btn btn-primary">Save Configuration</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function toggleProviderFields() {
+            var provider = document.getElementById('providerSelect').value;
+            document.getElementById('cloudflareFields').style.display = (provider === 'cloudflare') ? 'block' : 'none';
+            document.getElementById('duckdnsFields').style.display = (provider === 'duckdns') ? 'block' : 'none';
+        }
+        // Show the right fields on page load too, in case a provider is
+        // already pre-selected from the existing config.
+        toggleProviderFields();
+    </script>
+</body>
+</html>
