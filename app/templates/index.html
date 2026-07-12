@@ -4,7 +4,7 @@
     <title>DDNS Editor</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
 </head>
-<body class="container mt-5" style="max-width: 820px;">
+<body class="container mt-5" style="max-width: 860px;">
     <h1>DDNS Configuration Editor</h1>
     <p class="text-muted">Manages ddns-updater's config.json. This is a simple companion tool -- for update status/history, see ddns-updater's own dashboard on port 8000.</p>
 
@@ -54,17 +54,15 @@
                         <tr>
                             <td><code>{{ record.entry.domain or '(no domain)' }}</code></td>
                             <td>
-                                {% if record.entry.provider == 'cloudflare' %}
-                                    <span class="badge text-bg-warning text-dark">Cloudflare</span>
-                                {% elif record.entry.provider == 'duckdns' %}
-                                    <span class="badge text-bg-info text-dark">Duck DNS</span>
+                                {% if record.entry.provider in provider_schemas %}
+                                    <span class="badge text-bg-primary">{{ provider_schemas[record.entry.provider].label }}</span>
                                 {% else %}
                                     <span class="badge text-bg-secondary">{{ record.entry.provider or 'unknown' }}</span>
                                 {% endif %}
                             </td>
                             <td class="text-muted small">{{ record.summary }}</td>
                             <td class="text-end">
-                                {% if record.entry.provider in ('cloudflare', 'duckdns') %}
+                                {% if record.entry.provider in provider_schemas %}
                                 <a href="{{ url_for('index', edit=record.index) }}#add" class="btn btn-sm btn-outline-primary">Edit</a>
                                 {% else %}
                                 <a href="#advanced" data-bs-toggle="tab" data-bs-target="#advanced" class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('advanced-tab').click()">Edit in JSON</a>
@@ -85,9 +83,9 @@
         <div class="tab-pane fade {% if is_editing %}show active{% endif %}" id="add" role="tabpanel">
             {% if is_editing and not is_supported_provider %}
                 <div class="alert alert-warning">
-                    This record uses provider "<strong>{{ edit_provider }}</strong>", which isn't one of the
-                    providers this form supports yet (Cloudflare, Duck DNS). Use the
-                    <strong>Advanced</strong> tab to edit it directly.
+                    This record uses provider "<strong>{{ edit_provider }}</strong>", which doesn't have a form
+                    in this editor yet ({{ provider_schemas|length }} providers are currently supported).
+                    Use the <strong>Advanced</strong> tab to edit it directly.
                 </div>
             {% endif %}
 
@@ -101,10 +99,12 @@
                 <div class="mb-3">
                     <label class="form-label">DNS Provider</label>
                     <select class="form-select" name="provider" id="providerSelect" onchange="toggleProviderFields()">
-                        <option value="">-- Select a provider --</option>
-                        <option value="cloudflare" {% if edit_provider == 'cloudflare' %}selected{% endif %}>Cloudflare</option>
-                        <option value="duckdns" {% if edit_provider == 'duckdns' %}selected{% endif %}>Duck DNS</option>
+                        <option value="">-- Select a provider ({{ provider_schemas|length }} supported) --</option>
+                        {% for key, schema in provider_schemas.items() %}
+                        <option value="{{ key }}" {% if edit_provider == key %}selected{% endif %}>{{ schema.label }}</option>
+                        {% endfor %}
                     </select>
+                    <div class="form-text">Need a provider not listed? Use the <strong>Advanced</strong> tab -- see <a href="https://github.com/qdm12/ddns-updater/tree/master/docs" target="_blank">ddns-updater's provider docs</a> for the JSON shape.</div>
                 </div>
 
                 <div class="mb-3">
@@ -113,41 +113,42 @@
                            value="{{ edit_entry.domain or '' }}">
                 </div>
 
-                <div id="cloudflareFields" style="display: none;">
+                {% for key, schema in provider_schemas.items() %}
+                <div class="provider-fields" id="fields-{{ key }}" style="display: none;">
                     <hr>
-                    <h5>Cloudflare settings</h5>
+                    <h5>{{ schema.label }} settings</h5>
+                    {% if schema.note %}
+                        <p class="text-muted small">{{ schema.note }}</p>
+                    {% endif %}
+                    {% for field in schema.fields %}
                     <div class="mb-3">
-                        <label class="form-label">Zone ID</label>
-                        <input type="text" class="form-control" name="zone_identifier"
-                               value="{{ edit_entry.zone_identifier or '' }}">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">API Token (Zone:DNS:Edit scope)</label>
-                        <input type="password" class="form-control" name="token"
-                               placeholder="{% if edit_provider == 'cloudflare' %}leave blank to keep the existing token{% endif %}"
-                               value="">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">TTL (seconds)</label>
-                        <input type="number" class="form-control" name="ttl" value="{{ edit_entry.ttl or 300 }}">
-                    </div>
-                    <div class="form-check mb-3">
-                        <input class="form-check-input" type="checkbox" name="proxied" id="proxiedCheck"
-                               {% if edit_entry.proxied %}checked{% endif %}>
-                        <label class="form-check-label" for="proxiedCheck">Proxy through Cloudflare (orange cloud)</label>
-                    </div>
-                </div>
+                        {% if field.type != 'checkbox' %}<label class="form-label">{{ field.label }}{% if field.required %} *{% endif %}</label>{% endif %}
 
-                <div id="duckdnsFields" style="display: none;">
-                    <hr>
-                    <h5>Duck DNS settings</h5>
-                    <div class="mb-3">
-                        <label class="form-label">Token</label>
-                        <input type="password" class="form-control" name="token"
-                               placeholder="{% if edit_provider == 'duckdns' %}leave blank to keep the existing token{% endif %}"
-                               value="">
+                        {% if field.type == 'checkbox' %}
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="{{ key }}__{{ field.name }}" id="{{ key }}_{{ field.name }}"
+                                       {% if edit_provider == key and edit_entry.get(field.name) %}checked{% endif %}>
+                                <label class="form-check-label" for="{{ key }}_{{ field.name }}">{{ field.label }}</label>
+                            </div>
+                        {% elif field.type == 'select' %}
+                            <select class="form-select" name="{{ key }}__{{ field.name }}">
+                                {% for opt in field.options %}
+                                <option value="{{ opt }}" {% if (edit_entry.get(field.name) if edit_provider == key else field.default) == opt %}selected{% endif %}>{{ opt }}</option>
+                                {% endfor %}
+                            </select>
+                        {% elif field.type == 'secret' %}
+                            <input type="password" class="form-control" name="{{ key }}__{{ field.name }}"
+                                   placeholder="{% if edit_provider == key %}leave blank to keep the existing value{% endif %}">
+                        {% else %}
+                            <input type="{{ 'number' if field.type == 'number' else 'text' }}" class="form-control" name="{{ key }}__{{ field.name }}"
+                                   value="{{ (edit_entry.get(field.name, field.default) if edit_provider == key else field.default) or '' }}">
+                        {% endif %}
+
+                        {% if field.help %}<div class="form-text">{{ field.help }}</div>{% endif %}
                     </div>
+                    {% endfor %}
                 </div>
+                {% endfor %}
 
                 <button type="submit" class="btn btn-primary">{% if is_editing %}Save Changes{% else %}Add Record{% endif %}</button>
                 {% if is_editing %}
@@ -173,8 +174,9 @@
     <script>
         function toggleProviderFields() {
             var provider = document.getElementById('providerSelect').value;
-            document.getElementById('cloudflareFields').style.display = (provider === 'cloudflare') ? 'block' : 'none';
-            document.getElementById('duckdnsFields').style.display = (provider === 'duckdns') ? 'block' : 'none';
+            document.querySelectorAll('.provider-fields').forEach(function (el) {
+                el.style.display = (el.id === 'fields-' + provider) ? 'block' : 'none';
+            });
         }
         toggleProviderFields();
     </script>
