@@ -35,27 +35,59 @@ def save_config(config):
     os.replace(tmp_path, CONFIG_PATH)
 
 
-def get_first_setting():
-    settings = load_config().get("settings", [])
-    return settings[0] if settings else {}
+def summarize(entry):
+    """One-line human summary of a record for the list view. Never
+    includes the token."""
+    provider = entry.get("provider", "unknown")
+    if provider == "cloudflare":
+        zone = entry.get("zone_identifier", "")
+        zone_short = (zone[:10] + "…") if len(zone) > 10 else zone
+        ttl = entry.get("ttl", 300)
+        proxied = "Proxied" if entry.get("proxied") else "DNS only"
+        return f"Zone {zone_short} • TTL {ttl}s • {proxied}"
+    if provider == "duckdns":
+        return "Duck DNS"
+    # Unrecognized provider (any of the ~50 others ddns-updater supports).
+    # Show a compact key list so operators can still tell records apart.
+    keys = [k for k in entry.keys() if k not in ("provider", "domain", "token")]
+    return ("Custom provider (" + ", ".join(keys) + ")") if keys else "Custom provider"
 
 
 @app.route("/")
 def index():
     config = load_config()
-    first = get_first_setting()
-    provider = first.get("provider", "")
+    settings = config.get("settings", [])
+    records = [
+        {"index": i, "entry": entry, "summary": summarize(entry)}
+        for i, entry in enumerate(settings)
+    ]
+
+    edit_index = request.args.get("edit", type=int)
+    edit_entry = {}
+    is_editing = False
+    if edit_index is not None and 0 <= edit_index < len(settings):
+        edit_entry = settings[edit_index]
+        is_editing = True
+
     return render_template(
         "index.html",
         config=config,
-        first=first,
-        provider=provider,
-        is_supported_provider=provider in SUPPORTED_PROVIDERS,
+        records=records,
+        edit_index=edit_index if is_editing else "",
+        edit_entry=edit_entry,
+        edit_provider=edit_entry.get("provider", ""),
+        is_editing=is_editing,
+        is_supported_provider=edit_entry.get("provider", "") in SUPPORTED_PROVIDERS if is_editing else True,
     )
 
 
-@app.route("/update_simple", methods=["POST"])
-def update_simple():
+@app.route("/records/save", methods=["POST"])
+def save_record():
+    # Blank "index" means adding a new record; a valid integer means
+    # editing an existing one in place.
+    index_raw = request.form.get("index", "").strip()
+    index = int(index_raw) if index_raw.isdigit() else None
+
     provider = request.form.get("provider", "").strip()
     domain = request.form.get("domain", "").strip()
 
@@ -63,9 +95,14 @@ def update_simple():
         flash("Provider and domain are required.", "danger")
         return redirect(url_for("index"))
 
-    entry = {"provider": provider, "domain": domain}
-    existing = get_first_setting()
+    config = load_config()
+    settings = config.get("settings", [])
+    editing_existing = index is not None and 0 <= index < len(settings)
+
+    existing = settings[index] if editing_existing else {}
     existing_token = existing.get("token", "") if existing.get("provider") == provider else ""
+
+    entry = {"provider": provider, "domain": domain}
 
     if provider == "cloudflare":
         zone_identifier = request.form.get("zone_identifier", "").strip()
@@ -98,12 +135,33 @@ def update_simple():
         flash(f"Unknown provider '{provider}'.", "danger")
         return redirect(url_for("index"))
 
-    config = load_config()
-    # Simple mode manages a single entry. Anyone needing multiple domains/
-    # providers at once should use the Advanced (raw JSON) tab instead.
-    config["settings"] = [entry]
+    if editing_existing:
+        settings[index] = entry
+        flash(f"Record for {domain} updated. Restart ddns-updater for changes to take effect.", "success")
+    else:
+        settings.append(entry)
+        flash(f"Record for {domain} added. Restart ddns-updater for changes to take effect.", "success")
+
+    config["settings"] = settings
     save_config(config)
-    flash("Configuration saved. Restart ddns-updater for changes to take effect.", "success")
+    return redirect(url_for("index"))
+
+
+@app.route("/records/<int:index>/delete", methods=["POST"])
+def delete_record(index):
+    config = load_config()
+    settings = config.get("settings", [])
+    if 0 <= index < len(settings):
+        removed = settings.pop(index)
+        config["settings"] = settings
+        save_config(config)
+        flash(
+            f"Record for {removed.get('domain', 'unknown')} deleted. "
+            "Restart ddns-updater for changes to take effect.",
+            "success",
+        )
+    else:
+        flash("Record not found (it may have already been deleted).", "danger")
     return redirect(url_for("index"))
 
 
