@@ -1,0 +1,37 @@
+version: '3.8'
+services:
+  ddns-updater:
+    image: qmcgaw/ddns-updater
+    container_name: ddns-updater
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      # Bind mount (not a named volume) so scripts/configure_domain.sh can
+      # write config.json directly from the host. Shared with ddns-editor
+      # below so both containers read/write the exact same file.
+      - ./data:/updater/data
+    networks:
+      - homelab_network
+
+  ddns-editor:
+    # Pulled from Docker Hub, no local build context needed on the deploy
+    # host. Replace "yourusername" with your actual Docker Hub namespace.
+    image: yourusername/ddns-editor:latest
+    # To build locally from source instead (e.g. while developing), swap
+    # the "image:" line above for:
+    #   build: ../../ddns-editor
+    container_name: ddns-editor
+    restart: unless-stopped
+    ports:
+      - "5001:5000"
+    volumes:
+      - ./data:/updater/data
+    depends_on:
+      - ddns-updater
+    networks:
+      - homelab_network
+
+networks:
+  homelab_network:
+    external: true
