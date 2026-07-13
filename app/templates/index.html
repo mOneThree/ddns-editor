@@ -4,9 +4,25 @@
     <title>DDNS Editor</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
 </head>
-<body class="container mt-5" style="max-width: 860px;">
-    <h1>DDNS Configuration Editor</h1>
-    <p class="text-muted">Manages ddns-updater's config.json. This is a simple companion tool -- for update status/history, see ddns-updater's own dashboard on port 8000.</p>
+<body class="container mt-5" style="max-width: 900px;">
+    <div class="d-flex justify-content-between align-items-start">
+        <div>
+            <h1>DDNS Configuration Editor</h1>
+            <p class="text-muted">Manages ddns-updater's config.json. Update status/history below is best-effort -- for the full picture, see ddns-updater's own dashboard on port 8000.</p>
+        </div>
+        {% if auth_enabled %}
+        <form method="post" action="{{ url_for('logout') }}">
+            <button type="submit" class="btn btn-outline-secondary btn-sm">Log out</button>
+        </form>
+        {% endif %}
+    </div>
+
+    {% if not auth_enabled %}
+    <div class="alert alert-warning">
+        No password is set for this editor -- anyone who can reach this page can view and edit your DNS records and tokens.
+        Set <code>EDITOR_PASSWORD</code> (and optionally <code>EDITOR_USERNAME</code>) in your docker-compose.yml to require a login.
+    </div>
+    {% endif %}
 
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
@@ -31,6 +47,12 @@
         <li class="nav-item" role="presentation">
             <button class="nav-link" id="advanced-tab" data-bs-toggle="tab" data-bs-target="#advanced" type="button" role="tab">Advanced (Raw JSON)</button>
         </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="backups-tab" data-bs-toggle="tab" data-bs-target="#backups" type="button" role="tab">
+                Backups
+                {% if backups %}<span class="badge text-bg-secondary">{{ backups|length }}</span>{% endif %}
+            </button>
+        </li>
     </ul>
 
     <div class="tab-content border border-top-0 p-4" id="editorTabsContent">
@@ -46,6 +68,7 @@
                             <th>Domain</th>
                             <th>Provider</th>
                             <th>Details</th>
+                            <th>Last Update</th>
                             <th class="text-end">Actions</th>
                         </tr>
                     </thead>
@@ -61,6 +84,15 @@
                                 {% endif %}
                             </td>
                             <td class="text-muted small">{{ record.summary }}</td>
+                            <td class="small">
+                                {% if record.status %}
+                                    {% if record.status.ip %}<div>IP: <code>{{ record.status.ip }}</code></div>{% endif %}
+                                    {% if record.status.time %}<div class="text-muted">{{ record.status.time }}</div>{% endif %}
+                                    {% if not record.status.ip and not record.status.time %}<span class="text-muted">Seen in history, no details</span>{% endif %}
+                                {% else %}
+                                    <span class="text-muted">No update history yet</span>
+                                {% endif %}
+                            </td>
                             <td class="text-end">
                                 {% if record.entry.provider in provider_schemas %}
                                 <a href="{{ url_for('index', edit=record.index) }}#add" class="btn btn-sm btn-outline-primary">Edit</a>
@@ -76,6 +108,13 @@
                         {% endfor %}
                     </tbody>
                 </table>
+            {% endif %}
+
+            {% if updates_raw %}
+            <details class="mt-3">
+                <summary class="text-muted small">Raw update history (debug)</summary>
+                <pre class="small bg-light p-2 mt-2" style="max-height: 300px; overflow: auto;">{{ updates_raw }}</pre>
+            </details>
             {% endif %}
         </div>
 
@@ -93,7 +132,7 @@
                 <p class="text-muted">Editing record for <strong>{{ edit_entry.domain }}</strong>. <a href="{{ url_for('index') }}">Cancel and add a new record instead</a>.</p>
             {% endif %}
 
-            <form action="{{ url_for('save_record') }}" method="post">
+            <form action="{{ url_for('save_record') }}" method="post" id="recordForm">
                 <input type="hidden" name="index" value="{{ edit_index }}">
 
                 <div class="mb-3">
@@ -154,6 +193,8 @@
                 {% if is_editing %}
                 <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">Cancel</a>
                 {% endif %}
+                <button type="button" class="btn btn-outline-secondary" id="testConnectionBtn" style="display: none;" onclick="testConnection()">Test Connection</button>
+                <div id="testResult" class="mt-2"></div>
             </form>
         </div>
 
@@ -163,22 +204,79 @@
                 <div class="mb-3">
                     <label class="form-label">Config JSON</label>
                     <textarea class="form-control" name="config" rows="15" spellcheck="false">{{ config | tojson(indent=4) }}</textarea>
-                    <div class="form-text">Edit the raw ddns-updater config.json below, then save. Invalid JSON will be rejected without touching the live file. See <a href="https://github.com/qdm12/ddns-updater" target="_blank">ddns-updater's docs</a> for the full provider list/schema.</div>
+                    <div class="form-text">Edit the raw ddns-updater config.json below, then save. Invalid JSON will be rejected without touching the live file. A backup of the previous version is kept automatically -- see the <strong>Backups</strong> tab. See <a href="https://github.com/qdm12/ddns-updater" target="_blank">ddns-updater's docs</a> for the full provider list/schema.</div>
                 </div>
                 <button type="submit" class="btn btn-primary">Save Configuration</button>
             </form>
+        </div>
+
+        <!-- Backups -->
+        <div class="tab-pane fade" id="backups" role="tabpanel">
+            <p class="text-muted">A backup of config.json is saved automatically every time you save, before the change is written. The last {{ backups|length if backups else 0 }} are kept.</p>
+            {% if not backups %}
+                <p class="text-muted mb-0">No backups yet -- one will be created the next time you save a change.</p>
+            {% else %}
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr><th>Saved at</th><th>Size</th><th class="text-end">Actions</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for b in backups %}
+                        <tr>
+                            <td>{{ b.when }}</td>
+                            <td class="text-muted small">{{ b.size }} bytes</td>
+                            <td class="text-end">
+                                <form action="{{ url_for('restore_backup', filename=b.filename) }}" method="post" class="d-inline"
+                                      onsubmit="return confirm('Restore config.json to this backup from {{ b.when }}? Your current config will itself be backed up first.');">
+                                    <button type="submit" class="btn btn-sm btn-outline-warning">Restore</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% endif %}
         </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        var TESTABLE_PROVIDERS = {{ testable_providers | tojson }};
+
         function toggleProviderFields() {
             var provider = document.getElementById('providerSelect').value;
             document.querySelectorAll('.provider-fields').forEach(function (el) {
                 el.style.display = (el.id === 'fields-' + provider) ? 'block' : 'none';
             });
+            var testBtn = document.getElementById('testConnectionBtn');
+            document.getElementById('testResult').innerHTML = '';
+            testBtn.style.display = TESTABLE_PROVIDERS.indexOf(provider) !== -1 ? 'inline-block' : 'none';
         }
         toggleProviderFields();
+
+        function escapeHtml(s) {
+            var div = document.createElement('div');
+            div.textContent = s;
+            return div.innerHTML;
+        }
+
+        function testConnection() {
+            var btn = document.getElementById('testConnectionBtn');
+            var resultDiv = document.getElementById('testResult');
+            var form = document.getElementById('recordForm');
+            var formData = new FormData(form);
+            btn.disabled = true;
+            resultDiv.innerHTML = '<div class="text-muted">Testing…</div>';
+            fetch('{{ url_for("test_record") }}', { method: 'POST', body: formData })
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    resultDiv.innerHTML = '<div class="alert alert-' + (data.ok ? 'success' : 'danger') + ' py-2 mb-0">' + escapeHtml(data.message) + '</div>';
+                })
+                .catch(function (err) {
+                    resultDiv.innerHTML = '<div class="alert alert-danger py-2 mb-0">Request failed: ' + escapeHtml(String(err)) + '</div>';
+                })
+                .finally(function () { btn.disabled = false; });
+        }
     </script>
 </body>
 </html>
