@@ -34,6 +34,7 @@ def app_module(tmp_path, monkeypatch):
     appmod.BACKUP_DIR = str(tmp_path / "backups")
     appmod.AUTH_PATH = str(tmp_path / "auth.json")
     appmod.ACTIVITY_PATH = str(tmp_path / "activity.log")
+    appmod.API_TOKENS_PATH = str(tmp_path / "api_tokens.json")
     appmod.app.config["TESTING"] = True
     return appmod
 
