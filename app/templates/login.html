@@ -15,6 +15,7 @@
     <div class="alert alert-danger">{{ error }}</div>
     {% endif %}
     <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="next" value="{{ next }}">
         <div class="mb-3">
             <label class="form-label">Username</label>

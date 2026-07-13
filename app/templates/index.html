@@ -16,6 +16,7 @@
             {% endif %}
             {% if auth_configured %}
             <form method="post" action="{{ url_for('logout') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-outline-secondary btn-sm">Log out</button>
             </form>
             {% endif %}
@@ -34,6 +35,7 @@
         <div class="modal-dialog">
             <div class="modal-content">
                 <form method="post" action="{{ url_for('change_password') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="modal-header">
                         <h5 class="modal-title">Change Password</h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
@@ -92,6 +94,9 @@
                 {% if backups %}<span class="badge text-bg-secondary">{{ backups|length }}</span>{% endif %}
             </button>
         </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="activity-tab" data-bs-toggle="tab" data-bs-target="#activity" type="button" role="tab">Activity</button>
+        </li>
     </ul>
 
     <div class="tab-content border border-top-0 p-4" id="editorTabsContent">
@@ -101,7 +106,8 @@
             {% if not records %}
                 <p class="text-muted mb-0">No DNS records configured yet. Switch to the <strong>Add Record</strong> tab to create one.</p>
             {% else %}
-                <table class="table table-hover align-middle">
+                <input type="text" id="recordSearch" class="form-control mb-3" placeholder="Search by domain or provider..." oninput="filterRecords()">
+                <table class="table table-hover align-middle" id="recordsTable">
                     <thead>
                         <tr>
                             <th>Domain</th>
@@ -113,7 +119,7 @@
                     </thead>
                     <tbody>
                         {% for record in records %}
-                        <tr>
+                        <tr data-domain="{{ (record.entry.domain or '')|lower }}" data-provider="{{ (record.entry.provider or '')|lower }}">
                             <td><code>{{ record.entry.domain or '(no domain)' }}</code></td>
                             <td>
                                 {% if record.entry.provider in provider_schemas %}
@@ -138,10 +144,27 @@
                                 {% else %}
                                 <a href="#advanced" data-bs-toggle="tab" data-bs-target="#advanced" class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('advanced-tab').click()">Edit in JSON</a>
                                 {% endif %}
-                                <form action="{{ url_for('delete_record', index=record.index) }}" method="post" class="d-inline"
-                                      onsubmit="return confirm('Delete the record for {{ record.entry.domain or "this domain" }}? This cannot be undone.');">
-                                    <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
-                                </form>
+                                <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteModal-{{ record.index }}">Delete</button>
+                                <div class="modal fade" id="deleteModal-{{ record.index }}" tabindex="-1">
+                                    <div class="modal-dialog">
+                                        <div class="modal-content">
+                                            <form action="{{ url_for('delete_record', index=record.index) }}" method="post">
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                                <div class="modal-header">
+                                                    <h5 class="modal-title">Delete record?</h5>
+                                                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                                </div>
+                                                <div class="modal-body">
+                                                    Delete the record for <strong>{{ record.entry.domain or 'this domain' }}</strong>? This cannot be undone (though it will still be in your automatic backups).
+                                                </div>
+                                                <div class="modal-footer">
+                                                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                                                    <button type="submit" class="btn btn-danger">Delete</button>
+                                                </div>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
                             </td>
                         </tr>
                         {% endfor %}
@@ -172,6 +195,7 @@
             {% endif %}
 
             <form action="{{ url_for('save_record') }}" method="post" id="recordForm">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="index" value="{{ edit_index }}">
 
                 <div class="mb-3">
@@ -240,6 +264,7 @@
         <!-- Advanced / Raw JSON -->
         <div class="tab-pane fade" id="advanced" role="tabpanel">
             <form action="/update" method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="mb-3">
                     <label class="form-label">Config JSON</label>
                     <textarea class="form-control" name="config" rows="15" spellcheck="false">{{ config | tojson(indent=4) }}</textarea>
@@ -265,11 +290,53 @@
                             <td>{{ b.when }}</td>
                             <td class="text-muted small">{{ b.size }} bytes</td>
                             <td class="text-end">
-                                <form action="{{ url_for('restore_backup', filename=b.filename) }}" method="post" class="d-inline"
-                                      onsubmit="return confirm('Restore config.json to this backup from {{ b.when }}? Your current config will itself be backed up first.');">
-                                    <button type="submit" class="btn btn-sm btn-outline-warning">Restore</button>
-                                </form>
+                                <a href="{{ url_for('download_backup', filename=b.filename) }}" class="btn btn-sm btn-outline-secondary">Download</a>
+                                <button type="button" class="btn btn-sm btn-outline-warning" data-bs-toggle="modal" data-bs-target="#restoreModal-{{ loop.index }}">Restore</button>
+                                <div class="modal fade" id="restoreModal-{{ loop.index }}" tabindex="-1">
+                                    <div class="modal-dialog">
+                                        <div class="modal-content">
+                                            <form action="{{ url_for('restore_backup', filename=b.filename) }}" method="post">
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                                <div class="modal-header">
+                                                    <h5 class="modal-title">Restore this backup?</h5>
+                                                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                                </div>
+                                                <div class="modal-body">
+                                                    Restore config.json to the backup from <strong>{{ b.when }}</strong>? Your current config will itself be backed up first, so this is reversible.
+                                                </div>
+                                                <div class="modal-footer">
+                                                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                                                    <button type="submit" class="btn btn-warning">Restore</button>
+                                                </div>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
                             </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% endif %}
+        </div>
+
+        <!-- Activity -->
+        <div class="tab-pane fade" id="activity" role="tabpanel">
+            <p class="text-muted">Last {{ activity|length }} events (added, edited, deleted records; backup restores; logins; password changes). Kept on disk, capped at 500 entries.</p>
+            {% if not activity %}
+                <p class="text-muted mb-0">No activity recorded yet.</p>
+            {% else %}
+                <table class="table table-sm table-hover align-middle">
+                    <thead>
+                        <tr><th>Time</th><th>Action</th><th>Detail</th><th>IP</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for entry in activity %}
+                        <tr>
+                            <td class="small text-nowrap">{{ entry.time }}</td>
+                            <td class="small"><code>{{ entry.action }}</code></td>
+                            <td class="small text-muted">{{ entry.detail }}</td>
+                            <td class="small text-muted">{{ entry.ip }}</td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -292,6 +359,15 @@
             testBtn.style.display = TESTABLE_PROVIDERS.indexOf(provider) !== -1 ? 'inline-block' : 'none';
         }
         toggleProviderFields();
+
+        function filterRecords() {
+            var q = document.getElementById('recordSearch').value.trim().toLowerCase();
+            document.querySelectorAll('#recordsTable tbody tr').forEach(function (row) {
+                var domain = row.getAttribute('data-domain') || '';
+                var provider = row.getAttribute('data-provider') || '';
+                row.style.display = (domain.indexOf(q) !== -1 || provider.indexOf(q) !== -1) ? '' : 'none';
+            });
+        }
 
         function escapeHtml(s) {
             var div = document.createElement('div');

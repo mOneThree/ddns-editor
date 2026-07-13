@@ -3,14 +3,17 @@ import hmac
 import json
 import os
 import re
+import secrets
 import shutil
 import time
 import urllib.error
 import urllib.request
+from collections import defaultdict
 from datetime import datetime, timezone
 from functools import wraps
 
-from flask import Flask, render_template, request, redirect, url_for, flash, session
+from flask import Flask, render_template, request, redirect, url_for, flash, session, abort, Response
+
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
@@ -19,12 +22,162 @@ app = Flask(__name__)
 # don't mind being logged out on restart.
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24).hex())
 
+# Secure session cookie flags. SESSION_COOKIE_SECURE defaults to False
+# because it *breaks login entirely* if the browser is talking to this app
+# over plain HTTP (the browser silently refuses to send a Secure cookie
+# over an insecure connection) -- only flip it on once you've put this
+# behind HTTPS (see docs/REVERSE_PROXY.md), via SESSION_COOKIE_SECURE=true.
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.environ.get("SESSION_COOKIE_SECURE", "false").lower() == "true",
+)
+
 CONFIG_PATH = "/updater/data/config.json"
 UPDATES_PATH = os.path.join(os.path.dirname(CONFIG_PATH), "updates.json")
 BACKUP_DIR = os.path.join(os.path.dirname(CONFIG_PATH), "backups")
 AUTH_PATH = os.path.join(os.path.dirname(CONFIG_PATH), "auth.json")
+ACTIVITY_PATH = os.path.join(os.path.dirname(CONFIG_PATH), "activity.log")
 MAX_BACKUPS = int(os.environ.get("MAX_BACKUPS", "10"))
+MAX_ACTIVITY_ENTRIES = 500
 _BACKUP_NAME_RE = re.compile(r"^config-\d{8}T\d{6}Z\.json$")
+
+
+# ---------------------------------------------------------------------------
+# Activity log: a simple append-only record of who changed what and when.
+# Stored as newline-delimited JSON so it can't be corrupted by a partial
+# write the way a single big JSON array could be, and so it's trivially
+# appendable without reading the whole file back in.
+# ---------------------------------------------------------------------------
+
+def log_activity(action, detail=""):
+    try:
+        entry = {
+            "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "ip": _client_ip(),
+            "action": action,
+            "detail": detail,
+        }
+        with open(ACTIVITY_PATH, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+        _trim_activity_log()
+    except OSError:
+        pass  # never let logging break the actual operation
+
+
+def _trim_activity_log():
+    if not os.path.exists(ACTIVITY_PATH):
+        return
+    try:
+        with open(ACTIVITY_PATH, "r") as f:
+            lines = f.readlines()
+        if len(lines) > MAX_ACTIVITY_ENTRIES:
+            with open(ACTIVITY_PATH, "w") as f:
+                f.writelines(lines[-MAX_ACTIVITY_ENTRIES:])
+    except OSError:
+        pass
+
+
+def load_activity(limit=100):
+    if not os.path.exists(ACTIVITY_PATH):
+        return []
+    try:
+        with open(ACTIVITY_PATH, "r") as f:
+            lines = f.readlines()
+    except OSError:
+        return []
+    entries = []
+    for line in lines[-limit:]:
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    entries.reverse()  # most recent first
+    return entries
+
+
+# ---------------------------------------------------------------------------
+# Client IP helper. Only trusts X-Forwarded-For if TRUST_PROXY_HEADERS is
+# explicitly enabled -- if this app is reachable directly (no reverse
+# proxy in front stripping/setting that header), trusting it blindly would
+# let an attacker spoof a different IP on every request and bypass the
+# login lockout below entirely.
+# ---------------------------------------------------------------------------
+
+TRUST_PROXY_HEADERS = os.environ.get("TRUST_PROXY_HEADERS", "false").lower() == "true"
+
+
+def _client_ip():
+    if TRUST_PROXY_HEADERS:
+        fwd = request.headers.get("X-Forwarded-For", "")
+        if fwd:
+            return fwd.split(",")[0].strip()
+    return request.remote_addr or "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Login lockout. In-memory only (resets on container restart) -- this is a
+# single-container homelab tool, not a fleet, so a shared store like Redis
+# would be overkill. Keyed by client IP (see _client_ip above).
+# ---------------------------------------------------------------------------
+
+LOCKOUT_THRESHOLD = int(os.environ.get("LOGIN_LOCKOUT_THRESHOLD", "5"))
+LOCKOUT_WINDOW_SECONDS = int(os.environ.get("LOGIN_LOCKOUT_WINDOW_SECONDS", "300"))
+_failed_attempts = defaultdict(list)
+
+
+def _is_locked_out(ip):
+    now = time.time()
+    recent = [t for t in _failed_attempts[ip] if now - t < LOCKOUT_WINDOW_SECONDS]
+    _failed_attempts[ip] = recent
+    return len(recent) >= LOCKOUT_THRESHOLD
+
+
+def _record_failed_login(ip):
+    _failed_attempts[ip].append(time.time())
+
+
+def _clear_failed_logins(ip):
+    _failed_attempts.pop(ip, None)
+
+
+def _lockout_seconds_remaining(ip):
+    if not _failed_attempts[ip]:
+        return 0
+    oldest_relevant = min(_failed_attempts[ip])
+    remaining = LOCKOUT_WINDOW_SECONDS - (time.time() - oldest_relevant)
+    return max(0, int(remaining))
+
+
+# ---------------------------------------------------------------------------
+# CSRF protection. Deliberately hand-rolled (a session-bound random token,
+# required on every state-changing request) rather than pulling in
+# Flask-WTF, to keep the image's dependency footprint at just Flask.
+# ---------------------------------------------------------------------------
+
+def get_csrf_token():
+    token = session.get("csrf_token")
+    if not token:
+        token = secrets.token_hex(32)
+        session["csrf_token"] = token
+    return token
+
+
+app.jinja_env.globals["csrf_token"] = get_csrf_token
+
+
+@app.before_request
+def ensure_csrf_token():
+    get_csrf_token()  # establishes session['csrf_token'] if not already present
+
+
+@app.before_request
+def csrf_protect():
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        token = session.get("csrf_token")
+        submitted = request.form.get("csrf_token", "")
+        if not token or not submitted or not hmac.compare_digest(token, submitted):
+            abort(400, description="Your session token expired or is invalid. Please refresh the page and try again.")
 
 # ---------------------------------------------------------------------------
 # Authentication.
@@ -543,27 +696,37 @@ def require_login():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     error = None
+    ip = _client_ip()
     if request.method == "POST":
-        username = request.form.get("username", "")
-        password = request.form.get("password", "")
-        valid = False
+        if _is_locked_out(ip):
+            wait = _lockout_seconds_remaining(ip)
+            error = f"Too many failed attempts. Try again in about {max(wait // 60, 1)} minute(s)."
+        else:
+            username = request.form.get("username", "")
+            password = request.form.get("password", "")
+            valid = False
 
-        if EDITOR_PASSWORD:
-            valid = hmac.compare_digest(username, EDITOR_USERNAME) and hmac.compare_digest(password, EDITOR_PASSWORD)
+            if EDITOR_PASSWORD:
+                valid = hmac.compare_digest(username, EDITOR_USERNAME) and hmac.compare_digest(password, EDITOR_PASSWORD)
 
-        if not valid:
-            auth_data = load_auth()
-            if auth_data:
-                stored_user = auth_data.get("username", "admin")
-                valid = hmac.compare_digest(username, stored_user) and check_password_hash(
-                    auth_data.get("password_hash", ""), password
-                )
+            if not valid:
+                auth_data = load_auth()
+                if auth_data:
+                    stored_user = auth_data.get("username", "admin")
+                    valid = hmac.compare_digest(username, stored_user) and check_password_hash(
+                        auth_data.get("password_hash", ""), password
+                    )
 
-        if valid:
-            session["logged_in"] = True
-            return redirect(request.form.get("next") or url_for("index"))
-        time.sleep(1)  # basic throttle against brute-force attempts
-        error = "Invalid username or password."
+            if valid:
+                _clear_failed_logins(ip)
+                session["logged_in"] = True
+                log_activity("login_success", f"user={username}")
+                return redirect(request.form.get("next") or url_for("index"))
+
+            _record_failed_login(ip)
+            log_activity("login_failed", f"user={username}")
+            time.sleep(1)  # basic throttle in addition to the lockout above
+            error = "Invalid username or password."
 
     return render_template(
         "login.html",
@@ -599,6 +762,7 @@ def setup():
         else:
             save_auth({"username": username, "password_hash": generate_password_hash(password)})
             session["logged_in"] = True
+            log_activity("password_setup", f"user={username}")
             flash("Password set -- you're now logged in.", "success")
             return redirect(url_for("index"))
 
@@ -627,6 +791,7 @@ def change_password():
         return redirect(url_for("index"))
 
     save_auth({"username": auth_data.get("username", "admin"), "password_hash": generate_password_hash(new)})
+    log_activity("password_changed", f"user={auth_data.get('username', 'admin')}")
     flash("Password changed successfully.", "success")
     return redirect(url_for("index"))
 
@@ -671,6 +836,7 @@ def index():
         updates_raw=json.dumps(updates_data, indent=2) if updates_data else None,
         auth_configured=auth_configured(),
         auth_is_gui=(gui_auth_configured() and not env_auth_configured()),
+        activity=load_activity(),
     )
 
 
@@ -701,9 +867,11 @@ def save_record():
 
     if editing_existing:
         settings[index] = entry
+        log_activity("record_updated", f"domain={domain} provider={provider}")
         flash(f"Record for {domain} updated. Restart ddns-updater for changes to take effect.", "success")
     else:
         settings.append(entry)
+        log_activity("record_added", f"domain={domain} provider={provider}")
         flash(f"Record for {domain} added. Restart ddns-updater for changes to take effect.", "success")
 
     config["settings"] = settings
@@ -738,6 +906,7 @@ def delete_record(index):
         removed = settings.pop(index)
         config["settings"] = settings
         save_config(config)
+        log_activity("record_deleted", f"domain={removed.get('domain', 'unknown')} provider={removed.get('provider', 'unknown')}")
         flash(f"Record for {removed.get('domain', 'unknown')} deleted. Restart ddns-updater for changes to take effect.", "success")
     else:
         flash("Record not found (it may have already been deleted).", "danger")
@@ -756,6 +925,7 @@ def update():
         flash("Not saved: config must be a JSON object.", "danger")
         return redirect(url_for("index"))
     save_config(parsed)
+    log_activity("advanced_json_saved", f"{len(parsed.get('settings', []))} record(s)")
     flash("Configuration saved. Restart ddns-updater for changes to take effect.", "success")
     return redirect(url_for("index"))
 
@@ -776,8 +946,25 @@ def restore_backup(filename):
         flash(f"Could not read backup: {e}", "danger")
         return redirect(url_for("index"))
     save_config(data)  # backs up the pre-restore state first, same as any save
+    log_activity("backup_restored", filename)
     flash(f"Restored configuration from backup {filename}. Restart ddns-updater for changes to take effect.", "success")
     return redirect(url_for("index"))
+
+
+@app.route("/backups/<filename>/download")
+def download_backup(filename):
+    if not _BACKUP_NAME_RE.match(filename):
+        abort(400)
+    path = os.path.join(BACKUP_DIR, filename)
+    if not os.path.isfile(path):
+        abort(404)
+    with open(path, "r") as f:
+        contents = f.read()
+    return Response(
+        contents,
+        mimetype="application/json",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @app.route("/healthz")
