@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DDNS Editor -- API Tokens</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+</head>
+<body class="container mt-5" style="max-width: 800px;">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h1 class="h3 mb-0">API Tokens</h1>
+        <a href="{{ url_for('index') }}" class="btn btn-outline-secondary btn-sm">Back to editor</a>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+
+    {% if new_token %}
+    <div class="alert alert-warning">
+        <strong>Copy this token now -- it will not be shown again:</strong>
+        <input type="text" class="form-control mt-2" value="{{ new_token }}" readonly onclick="this.select()">
+    </div>
+    {% endif %}
+
+    <p class="text-muted">Use a token to call the API without a browser session. Example:</p>
+    <pre class="bg-light p-2 small">curl -H "Authorization: Bearer &lt;token&gt;" https://your-host:5001/api/v1/records</pre>
+
+    <table class="table table-hover align-middle">
+        <thead>
+            <tr><th>Label</th><th>Role</th><th>Created</th><th class="text-end">Actions</th></tr>
+        </thead>
+        <tbody>
+            {% if not tokens %}
+            <tr><td colspan="4" class="text-muted">No tokens yet.</td></tr>
+            {% endif %}
+            {% for t in tokens %}
+            <tr>
+                <td><code>{{ t.label }}</code></td>
+                <td><span class="badge text-bg-{{ 'primary' if t.role == 'admin' else 'secondary' }}">{{ t.role }}</span></td>
+                <td class="text-muted small">{{ t.created }}</td>
+                <td class="text-end">
+                    <form action="{{ url_for('revoke_api_token_route', label=t.label) }}" method="post" class="d-inline"
+                          onsubmit="return confirm('Revoke token {{ t.label }}? Any script using it will stop working immediately.');">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-sm btn-outline-danger">Revoke</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <hr>
+    <h5>Create a token</h5>
+    <form action="{{ url_for('create_api_token_route') }}" method="post" class="row g-2">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="col-md-6">
+            <input type="text" class="form-control" name="label" placeholder="Label (e.g. 'home-assistant')" required>
+        </div>
+        <div class="col-md-3">
+            <select name="role" class="form-select">
+                <option value="readonly">readonly</option>
+                <option value="admin">admin</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <button type="submit" class="btn btn-primary w-100">Create</button>
+        </div>
+    </form>
+    <p class="text-muted small mt-2">
+        <strong>readonly</strong> tokens can call <code>GET /api/v1/records</code> and <code>GET /api/v1/status</code>.
+        <strong>admin</strong> tokens can also <code>POST /api/v1/records</code> and <code>DELETE /api/v1/records/&lt;index&gt;</code>.
+    </p>
+</body>
+</html>

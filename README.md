@@ -19,14 +19,18 @@ It's built to sit alongside `ddns-updater` in the same Docker Compose stack, sha
 - **Live "Test Connection"** for Cloudflare, DigitalOcean, GoDaddy, and Porkbun — an actual read-only API call before you save, so a bad token surfaces immediately instead of days later. (Not offered for providers whose only API call *is* a real DNS update — testing those would trigger a live change as a side effect.)
 - **Update status** — reads `ddns-updater`'s own `updates.json` and shows last-known IP/time per record, best-effort (that file's schema isn't officially documented; a raw-JSON debug panel is included in case it needs adjusting for your version).
 - **Automatic backups** — every save backs up the previous `config.json` first (kept last 10, configurable), with one-click **Restore** and **Download** per backup.
-- **Optional login** — set up a password through the app itself (`/setup`) or via an `EDITOR_PASSWORD` env var (which also works as a permanent recovery credential if you forget a GUI-set password). Includes login lockout after repeated failures and secure session cookie flags.
+- **Optional login** — set up a password through the app itself (`/setup`) or via an `EDITOR_PASSWORD` env var (which also works as a permanent recovery credential alongside GUI-managed users). Includes login lockout after repeated failures and secure session cookie flags.
+- **Multi-user accounts with roles** — add additional users (admin or read-only) from the Users page; read-only accounts can view records/status/activity and run Test Connection, but can't save, delete, or restore anything.
+- **Two-factor authentication (TOTP)** — optional per-user, self-service setup via any standard authenticator app.
+- **Token-based API** — create scoped API tokens (admin or read-only) for scripts/automation to list, add, or delete records via `GET/POST /api/v1/records` without a browser session.
+- **Webhook notifications** — optional `WEBHOOK_URL` (generic JSON, Discord, Slack, or ntfy format) pings on record changes, backup restores, logins, and account/token changes.
 - **CSRF protection** on every state-changing action.
-- **Activity log** — tracks record changes, backup restores, logins, and password changes.
+- **Activity log** — tracks record changes, backup restores, logins, password/2FA changes, and user/token management.
 - **Advanced (Raw JSON) tab** — full manual control, always available as a fallback.
 - **Safe writes** — config is written to a temp file and atomically renamed into place, so a crash mid-save can't corrupt your live config.
 - **`GET /healthz`** for container orchestrators / uptime monitors.
 - **Multi-arch image** — published for `linux/amd64` and `linux/arm64`, so it runs on a Raspberry Pi as happily as a NAS or VM.
-- **Tested in CI** — a 28-case pytest suite runs on every release before anything is built, plus a post-build smoke test that actually runs the container and hits `/healthz` before it's pushed to Docker Hub.
+- **Tested in CI** — a 47-case pytest suite runs on every release before anything is built, plus a post-build smoke test that actually runs the container and hits `/healthz` before it's pushed to Docker Hub.
 
 ---
 
@@ -91,10 +95,12 @@ Then open **http://localhost:5001**. If you haven't set a password yet, you'll s
 | `TRUST_PROXY_HEADERS` | No | `false` | Set to `true` only if a trusted reverse proxy sets `X-Forwarded-For` — otherwise the login lockout can be bypassed by a spoofed header. |
 | `LOGIN_LOCKOUT_THRESHOLD` | No | `5` | Failed login attempts (per IP) before a temporary lockout. |
 | `LOGIN_LOCKOUT_WINDOW_SECONDS` | No | `300` | Lockout window length, in seconds. |
+| `WEBHOOK_URL` | No | unset | If set, POSTs a notification here on record changes, backup restores, logins, and account/token management events. |
+| `WEBHOOK_FORMAT` | No | `generic` | Payload shape for `WEBHOOK_URL`: `generic` (plain JSON), `discord`, `slack`, or `ntfy`. |
 
 | Volume | Purpose |
 |---|---|
-| `/updater/data` | Must point at the **same** path/volume as `ddns-updater`'s `/updater/data`. Also where this app stores `auth.json` (password hash), `backups/`, and `activity.log`. |
+| `/updater/data` | Must point at the **same** path/volume as `ddns-updater`'s `/updater/data`. Also where this app stores `auth.json` (user accounts/2FA), `api_tokens.json`, `backups/`, and `activity.log`. |
 
 ---
 
@@ -141,18 +147,23 @@ git push origin v1.7.0
 ├── requirements.txt
 ├── requirements-dev.txt
 ├── README.md
-├── PROVIDER_BACKLOG.md       # remaining ~35 ddns-updater providers not yet schema'd
+├── PROVIDER_BACKLOG.md        # remaining ~35 ddns-updater providers not yet schema'd
+├── ENHANCEMENT_BACKLOG.md     # other deferred feature ideas
 ├── .github/workflows/docker-publish.yml
 ├── docs/
 │   └── REVERSE_PROXY.md      # HTTPS via Nginx Proxy Manager / Caddy / Traefik
 ├── tests/
-│   └── test_app.py           # 28-case pytest suite, runs in CI before every build
+│   └── test_app.py           # pytest suite, runs in CI before every build
 └── app/
     ├── app.py
     ├── templates/
-    │   ├── index.html        # Records / Add-Edit / Advanced / Backups / Activity tabs
+    │   ├── index.html         # Records / Add-Edit / Advanced / Backups / Activity tabs
     │   ├── login.html
-    │   └── setup.html
+    │   ├── login_2fa.html
+    │   ├── setup.html
+    │   ├── setup_2fa.html
+    │   ├── users.html         # admin-only user management
+    │   └── api_tokens.html    # admin-only API token management
     └── static/
 ```
 
@@ -183,6 +194,27 @@ git push origin v1.7.0
 | OVH (DynHost mode) | Username, Password | — |
 
 Need a provider not listed? Use the **Advanced** tab to hand-write the JSON entry — see [ddns-updater's provider docs](https://github.com/qdm12/ddns-updater/tree/master/docs) for the exact shape each one expects, and check [`PROVIDER_BACKLOG.md`](PROVIDER_BACKLOG.md) for the full remaining list.
+
+---
+
+## API access
+
+Create a token from the **API Tokens** page (admin users only), then call:
+
+```bash
+# List records
+curl -H "Authorization: Bearer <token>" https://your-host:5001/api/v1/records
+
+# Add a record (admin-role token required)
+curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"provider": "duckdns", "domain": "home.example.com", "token": "your-duckdns-token"}' \
+  https://your-host:5001/api/v1/records
+
+# Delete a record by index (admin-role token required)
+curl -X DELETE -H "Authorization: Bearer <token>" https://your-host:5001/api/v1/records/0
+```
+
+Read-only tokens can call `GET /api/v1/records` and `GET /api/v1/status`; admin tokens can also add/delete. Tokens are shown once at creation and stored hashed — there's no way to retrieve a lost token, only revoke and re-create.
 
 ---
 

@@ -10,7 +10,14 @@
             <h1>DDNS Configuration Editor</h1>
             <p class="text-muted">Manages ddns-updater's config.json. Update status/history below is best-effort -- for the full picture, see ddns-updater's own dashboard on port 8000.</p>
         </div>
-        <div class="d-flex gap-2">
+        <div class="d-flex gap-2 align-items-start">
+            {% if current_username %}
+            <span class="badge text-bg-light text-dark border align-self-center">{{ current_username }} ({{ current_role }})</span>
+            {% endif %}
+            {% if is_admin and auth_configured %}
+            <a href="{{ url_for('users_page') }}" class="btn btn-outline-secondary btn-sm">Users</a>
+            <a href="{{ url_for('api_tokens_page') }}" class="btn btn-outline-secondary btn-sm">API Tokens</a>
+            {% endif %}
             {% if auth_is_gui %}
             <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#changePasswordModal">Change Password</button>
             {% endif %}
@@ -54,10 +61,39 @@
                             <label class="form-label">Confirm new password</label>
                             <input type="password" class="form-control" name="confirm_password" required>
                         </div>
+                        <hr>
+                        <h6>Two-factor authentication</h6>
+                        <p class="text-muted small">Adds a second step (authenticator app code) at login.</p>
+                        <a href="{{ url_for('setup_2fa') }}" class="btn btn-outline-primary btn-sm">Set up 2FA</a>
+                        <button type="button" class="btn btn-outline-danger btn-sm" data-bs-toggle="modal" data-bs-target="#disable2faModal">Disable 2FA</button>
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
                         <button type="submit" class="btn btn-primary">Change Password</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="disable2faModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <form method="post" action="{{ url_for('disable_2fa') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Disable two-factor authentication</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label">Confirm your current password</label>
+                            <input type="password" class="form-control" name="current_password" required>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-danger">Disable 2FA</button>
                     </div>
                 </form>
             </div>
@@ -144,7 +180,9 @@
                                 {% else %}
                                 <a href="#advanced" data-bs-toggle="tab" data-bs-target="#advanced" class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('advanced-tab').click()">Edit in JSON</a>
                                 {% endif %}
+                                {% if is_admin %}
                                 <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteModal-{{ record.index }}">Delete</button>
+                                {% endif %}
                                 <div class="modal fade" id="deleteModal-{{ record.index }}" tabindex="-1">
                                     <div class="modal-dialog">
                                         <div class="modal-content">
@@ -252,7 +290,11 @@
                 </div>
                 {% endfor %}
 
+                {% if is_admin %}
                 <button type="submit" class="btn btn-primary">{% if is_editing %}Save Changes{% else %}Add Record{% endif %}</button>
+                {% else %}
+                <p class="text-muted">Your account is read-only -- you can use Test Connection, but saving is disabled.</p>
+                {% endif %}
                 {% if is_editing %}
                 <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">Cancel</a>
                 {% endif %}
@@ -270,7 +312,11 @@
                     <textarea class="form-control" name="config" rows="15" spellcheck="false">{{ config | tojson(indent=4) }}</textarea>
                     <div class="form-text">Edit the raw ddns-updater config.json below, then save. Invalid JSON will be rejected without touching the live file. A backup of the previous version is kept automatically -- see the <strong>Backups</strong> tab. See <a href="https://github.com/qdm12/ddns-updater" target="_blank">ddns-updater's docs</a> for the full provider list/schema.</div>
                 </div>
+                {% if is_admin %}
                 <button type="submit" class="btn btn-primary">Save Configuration</button>
+                {% else %}
+                <p class="text-muted">Your account is read-only -- viewing only.</p>
+                {% endif %}
             </form>
         </div>
 
@@ -291,7 +337,9 @@
                             <td class="text-muted small">{{ b.size }} bytes</td>
                             <td class="text-end">
                                 <a href="{{ url_for('download_backup', filename=b.filename) }}" class="btn btn-sm btn-outline-secondary">Download</a>
+                                {% if is_admin %}
                                 <button type="button" class="btn btn-sm btn-outline-warning" data-bs-toggle="modal" data-bs-target="#restoreModal-{{ loop.index }}">Restore</button>
+                                {% endif %}
                                 <div class="modal fade" id="restoreModal-{{ loop.index }}" tabindex="-1">
                                     <div class="modal-dialog">
                                         <div class="modal-content">

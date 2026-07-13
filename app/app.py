@@ -1,10 +1,13 @@
+import base64
 import glob
+import hashlib
 import hmac
 import json
 import os
 import re
 import secrets
 import shutil
+import struct
 import time
 import urllib.error
 import urllib.request
@@ -38,9 +41,13 @@ UPDATES_PATH = os.path.join(os.path.dirname(CONFIG_PATH), "updates.json")
 BACKUP_DIR = os.path.join(os.path.dirname(CONFIG_PATH), "backups")
 AUTH_PATH = os.path.join(os.path.dirname(CONFIG_PATH), "auth.json")
 ACTIVITY_PATH = os.path.join(os.path.dirname(CONFIG_PATH), "activity.log")
+API_TOKENS_PATH = os.path.join(os.path.dirname(CONFIG_PATH), "api_tokens.json")
 MAX_BACKUPS = int(os.environ.get("MAX_BACKUPS", "10"))
 MAX_ACTIVITY_ENTRIES = 500
 _BACKUP_NAME_RE = re.compile(r"^config-\d{8}T\d{6}Z\.json$")
+
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
+WEBHOOK_FORMAT = os.environ.get("WEBHOOK_FORMAT", "generic").lower()  # generic | discord | slack | ntfy
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +70,40 @@ def log_activity(action, detail=""):
         _trim_activity_log()
     except OSError:
         pass  # never let logging break the actual operation
+
+    if action in _WEBHOOK_NOTIFY_ACTIONS:
+        _send_webhook(action, detail)
+
+
+_WEBHOOK_NOTIFY_ACTIONS = {
+    "record_added", "record_updated", "record_deleted", "backup_restored",
+    "password_changed", "password_setup", "user_added", "user_deleted",
+    "user_role_changed", "2fa_enabled", "2fa_disabled", "api_token_created",
+    "api_token_revoked",
+}
+
+
+def _send_webhook(action, detail):
+    if not WEBHOOK_URL:
+        return
+    message = f"ddns-editor: {action.replace('_', ' ')}" + (f" ({detail})" if detail else "")
+    try:
+        if WEBHOOK_FORMAT == "discord":
+            body = {"content": message}
+        elif WEBHOOK_FORMAT == "slack":
+            body = {"text": message}
+        elif WEBHOOK_FORMAT == "ntfy":
+            # ntfy accepts a raw text body, not JSON.
+            req = urllib.request.Request(WEBHOOK_URL, data=message.encode("utf-8"), method="POST")
+            urllib.request.urlopen(req, timeout=5)
+            return
+        else:
+            body = {"event": action, "detail": detail, "time": datetime.now(timezone.utc).isoformat()}
+        data = json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(WEBHOOK_URL, data=data, headers={"Content-Type": "application/json"}, method="POST")
+        urllib.request.urlopen(req, timeout=5)
+    except Exception:
+        pass  # a notification failure must never break the actual operation
 
 
 def _trim_activity_log():
@@ -173,6 +214,8 @@ def ensure_csrf_token():
 
 @app.before_request
 def csrf_protect():
+    if (request.path or "").startswith("/api/"):
+        return  # token-authenticated, not cookie/session-based -- not CSRF-vulnerable
     if request.method in ("POST", "PUT", "PATCH", "DELETE"):
         token = session.get("csrf_token")
         submitted = request.form.get("csrf_token", "")
@@ -202,13 +245,32 @@ EDITOR_PASSWORD = os.environ.get("EDITOR_PASSWORD", "")
 
 
 def load_auth():
+    """Returns {"users": [...]}. Transparently migrates the old
+    single-user format ({"username":..., "password_hash":...}) used by
+    versions before multi-user support existed, so upgrading never locks
+    out an existing GUI-configured user."""
     if not os.path.exists(AUTH_PATH):
         return None
     try:
         with open(AUTH_PATH, "r") as f:
-            return json.load(f)
+            data = json.load(f)
     except (OSError, json.JSONDecodeError):
         return None
+
+    if "users" not in data and "password_hash" in data:
+        migrated = {
+            "users": [{
+                "username": data.get("username", "admin"),
+                "password_hash": data["password_hash"],
+                "role": "admin",
+                "totp_secret": None,
+                "totp_enabled": False,
+            }]
+        }
+        save_auth(migrated)
+        return migrated
+
+    return data
 
 
 def save_auth(data):
@@ -219,16 +281,108 @@ def save_auth(data):
     os.replace(tmp, AUTH_PATH)
 
 
+def find_user(username):
+    auth = load_auth()
+    if not auth:
+        return None
+    for u in auth.get("users", []):
+        if hmac.compare_digest(u["username"], username):
+            return u
+    return None
+
+
+def update_user(username, **changes):
+    auth = load_auth() or {"users": []}
+    for u in auth["users"]:
+        if u["username"] == username:
+            u.update(changes)
+            break
+    save_auth(auth)
+
+
 def env_auth_configured():
     return bool(EDITOR_PASSWORD)
 
 
 def gui_auth_configured():
-    return load_auth() is not None
+    auth = load_auth()
+    return bool(auth and auth.get("users"))
 
 
 def auth_configured():
     return env_auth_configured() or gui_auth_configured()
+
+
+def current_user():
+    """The logged-in user's record, or a synthetic admin record for the
+    EDITOR_PASSWORD env-var login (which always carries admin rights --
+    it's a single shared operator credential, not a per-person account)."""
+    if session.get("auth_via") == "env":
+        return {"username": EDITOR_USERNAME, "role": "admin"}
+    username = session.get("username")
+    return find_user(username) if username else None
+
+
+def current_role():
+    user = current_user()
+    return user["role"] if user else None
+
+
+def require_admin(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if auth_configured() and current_role() != "admin":
+            abort(403, description="Admin role required.")
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def require_write(view):
+    """Blocks readonly-role users from state-changing routes. Read-only
+    actions (viewing records, running a live connection test, downloading
+    a backup) stay available to them."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if auth_configured() and current_role() == "readonly":
+            abort(403, description="Read-only accounts can't make changes.")
+        return view(*args, **kwargs)
+    return wrapped
+
+
+# ---------------------------------------------------------------------------
+# TOTP (RFC 6238) two-factor auth, implemented directly with hashlib/hmac/
+# struct rather than pulling in a dependency -- the algorithm is short and
+# stable, and this keeps the image's dependency footprint at just Flask.
+# ---------------------------------------------------------------------------
+
+def generate_totp_secret():
+    return base64.b32encode(os.urandom(20)).decode("utf-8").rstrip("=")
+
+
+def _totp_code(secret, for_time, step=30, digits=6):
+    padded = secret.upper() + "=" * ((8 - len(secret) % 8) % 8)
+    key = base64.b32decode(padded)
+    counter = int(for_time // step)
+    msg = struct.pack(">Q", counter)
+    digest = hmac.new(key, msg, hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    code_int = (struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF) % (10 ** digits)
+    return str(code_int).zfill(digits)
+
+
+def verify_totp(secret, code, step=30, digits=6, window=1):
+    if not code or not code.isdigit():
+        return False
+    now = time.time()
+    for offset in range(-window, window + 1):
+        expected = _totp_code(secret, now + offset * step, step, digits)
+        if hmac.compare_digest(expected, code):
+            return True
+    return False
+
+
+def totp_uri(secret, username, issuer="DDNS Editor"):
+    return f"otpauth://totp/{issuer}:{username}?secret={secret}&issuer={issuer}"
 
 
 # ---------------------------------------------------------------------------
@@ -672,22 +826,17 @@ def _extract_test_fields(provider, form, existing):
 
 @app.before_request
 def require_login():
-    if request.endpoint in ("healthz", "static"):
-        return
+    if request.endpoint in ("healthz", "static") or (request.path or "").startswith("/api/"):
+        return  # API routes have their own token-based gate, see below
 
     if not auth_configured():
-        # Nothing set anywhere -- stay fully open (backward compatible).
-        # /setup is still reachable so the operator can turn auth on.
-        return
+        return  # nothing set anywhere -- stay fully open (backward compatible)
 
-    if request.endpoint == "login":
+    if request.endpoint in ("login", "login_2fa"):
         return
 
     if request.endpoint == "setup":
-        # Always defer to the view itself -- it already redirects (with an
-        # explanatory flash) once something's configured, so a second
-        # identity can't be created here.
-        return
+        return  # view itself redirects once something's configured
 
     if not session.get("logged_in"):
         return redirect(url_for("login", next=request.path))
@@ -704,22 +853,28 @@ def login():
         else:
             username = request.form.get("username", "")
             password = request.form.get("password", "")
-            valid = False
+            valid, role, auth_via, needs_2fa = False, None, None, False
 
-            if EDITOR_PASSWORD:
-                valid = hmac.compare_digest(username, EDITOR_USERNAME) and hmac.compare_digest(password, EDITOR_PASSWORD)
+            if EDITOR_PASSWORD and hmac.compare_digest(username, EDITOR_USERNAME) and hmac.compare_digest(password, EDITOR_PASSWORD):
+                valid, role, auth_via = True, "admin", "env"
 
             if not valid:
-                auth_data = load_auth()
-                if auth_data:
-                    stored_user = auth_data.get("username", "admin")
-                    valid = hmac.compare_digest(username, stored_user) and check_password_hash(
-                        auth_data.get("password_hash", ""), password
-                    )
+                user = find_user(username)
+                if user and check_password_hash(user.get("password_hash", ""), password):
+                    valid, role, auth_via = True, user["role"], "gui"
+                    needs_2fa = bool(user.get("totp_enabled"))
 
             if valid:
                 _clear_failed_logins(ip)
+                if needs_2fa:
+                    # Password correct, but a second factor is required --
+                    # don't grant a session yet, stash a pending state.
+                    session["pending_2fa_user"] = username
+                    session["pending_2fa_next"] = request.form.get("next") or url_for("index")
+                    return redirect(url_for("login_2fa"))
                 session["logged_in"] = True
+                session["username"] = username
+                session["auth_via"] = auth_via
                 log_activity("login_success", f"user={username}")
                 return redirect(request.form.get("next") or url_for("index"))
 
@@ -734,6 +889,31 @@ def login():
         next=request.args.get("next", ""),
         setup_available=(not env_auth_configured() and not gui_auth_configured()),
     )
+
+
+@app.route("/login/2fa", methods=["GET", "POST"])
+def login_2fa():
+    username = session.get("pending_2fa_user")
+    if not username:
+        return redirect(url_for("login"))
+
+    error = None
+    if request.method == "POST":
+        code = request.form.get("code", "").strip()
+        user = find_user(username)
+        if user and verify_totp(user.get("totp_secret", ""), code):
+            session.pop("pending_2fa_user", None)
+            next_url = session.pop("pending_2fa_next", url_for("index"))
+            session["logged_in"] = True
+            session["username"] = username
+            session["auth_via"] = "gui"
+            log_activity("login_success", f"user={username} (2fa)")
+            return redirect(next_url)
+        log_activity("login_failed", f"user={username} (bad 2fa code)")
+        time.sleep(1)
+        error = "Invalid code."
+
+    return render_template("login_2fa.html", error=error)
 
 
 @app.route("/logout", methods=["POST"])
@@ -760,10 +940,15 @@ def setup():
         elif password != confirm:
             error = "Passwords do not match."
         else:
-            save_auth({"username": username, "password_hash": generate_password_hash(password)})
+            save_auth({"users": [{
+                "username": username, "password_hash": generate_password_hash(password),
+                "role": "admin", "totp_secret": None, "totp_enabled": False,
+            }]})
             session["logged_in"] = True
+            session["username"] = username
+            session["auth_via"] = "gui"
             log_activity("password_setup", f"user={username}")
-            flash("Password set -- you're now logged in.", "success")
+            flash("Password set -- you're now logged in as the admin user.", "success")
             return redirect(url_for("index"))
 
     return render_template("setup.html", error=error)
@@ -771,16 +956,17 @@ def setup():
 
 @app.route("/account/change-password", methods=["POST"])
 def change_password():
-    if env_auth_configured():
-        flash("Password is managed via the EDITOR_PASSWORD environment variable; unset it to manage the password from here instead.", "danger")
+    if session.get("auth_via") == "env":
+        flash("Password is managed via the EDITOR_PASSWORD environment variable; unset it to manage passwords from here instead.", "danger")
         return redirect(url_for("index"))
 
-    auth_data = load_auth()
+    username = session.get("username")
+    user = find_user(username)
     current = request.form.get("current_password", "")
     new = request.form.get("new_password", "")
     confirm = request.form.get("confirm_password", "")
 
-    if not auth_data or not check_password_hash(auth_data.get("password_hash", ""), current):
+    if not user or not check_password_hash(user.get("password_hash", ""), current):
         flash("Current password is incorrect.", "danger")
         return redirect(url_for("index"))
     if len(new) < 8:
@@ -790,10 +976,314 @@ def change_password():
         flash("New passwords do not match.", "danger")
         return redirect(url_for("index"))
 
-    save_auth({"username": auth_data.get("username", "admin"), "password_hash": generate_password_hash(new)})
-    log_activity("password_changed", f"user={auth_data.get('username', 'admin')}")
+    update_user(username, password_hash=generate_password_hash(new))
+    log_activity("password_changed", f"user={username}")
     flash("Password changed successfully.", "success")
     return redirect(url_for("index"))
+
+
+# ---------------------------------------------------------------------------
+# Two-factor auth setup (per-user, self-service)
+# ---------------------------------------------------------------------------
+
+@app.route("/account/2fa/setup", methods=["GET", "POST"])
+def setup_2fa():
+    if session.get("auth_via") == "env":
+        abort(400, description="2FA isn't available for the environment-variable login.")
+    username = session.get("username")
+    user = find_user(username)
+    if not user:
+        abort(400)
+
+    if request.method == "GET":
+        secret = generate_totp_secret()
+        session["pending_totp_secret"] = secret
+        return render_template("setup_2fa.html", secret=secret, uri=totp_uri(secret, username), error=None)
+
+    secret = session.get("pending_totp_secret", "")
+    code = request.form.get("code", "").strip()
+    if not secret or not verify_totp(secret, code):
+        return render_template(
+            "setup_2fa.html", secret=secret, uri=totp_uri(secret, username),
+            error="That code didn't match. Scan the QR/enter the secret again and try the current code.",
+        )
+
+    update_user(username, totp_secret=secret, totp_enabled=True)
+    session.pop("pending_totp_secret", None)
+    log_activity("2fa_enabled", f"user={username}")
+    flash("Two-factor authentication enabled.", "success")
+    return redirect(url_for("index"))
+
+
+@app.route("/account/2fa/disable", methods=["POST"])
+def disable_2fa():
+    if session.get("auth_via") == "env":
+        abort(400)
+    username = session.get("username")
+    user = find_user(username)
+    password = request.form.get("current_password", "")
+    if not user or not check_password_hash(user.get("password_hash", ""), password):
+        flash("Current password is incorrect.", "danger")
+        return redirect(url_for("index"))
+    update_user(username, totp_secret=None, totp_enabled=False)
+    log_activity("2fa_disabled", f"user={username}")
+    flash("Two-factor authentication disabled.", "success")
+    return redirect(url_for("index"))
+
+
+# ---------------------------------------------------------------------------
+# User management (admin only)
+# ---------------------------------------------------------------------------
+
+@app.route("/users", methods=["GET"])
+@require_admin
+def users_page():
+    auth = load_auth() or {"users": []}
+    return render_template("users.html", users=auth.get("users", []), current_username=session.get("username"))
+
+
+@app.route("/users/add", methods=["POST"])
+@require_admin
+def add_user():
+    username = request.form.get("username", "").strip()
+    password = request.form.get("password", "")
+    role = request.form.get("role", "readonly")
+    if role not in ("admin", "readonly"):
+        role = "readonly"
+
+    if not username or len(password) < 8:
+        flash("Username is required and password must be at least 8 characters.", "danger")
+        return redirect(url_for("users_page"))
+    if find_user(username):
+        flash(f"A user named '{username}' already exists.", "danger")
+        return redirect(url_for("users_page"))
+
+    auth = load_auth() or {"users": []}
+    auth["users"].append({
+        "username": username, "password_hash": generate_password_hash(password),
+        "role": role, "totp_secret": None, "totp_enabled": False,
+    })
+    save_auth(auth)
+    log_activity("user_added", f"user={username} role={role}")
+    flash(f"User '{username}' added.", "success")
+    return redirect(url_for("users_page"))
+
+
+@app.route("/users/<username>/delete", methods=["POST"])
+@require_admin
+def delete_user(username):
+    auth = load_auth() or {"users": []}
+    users = auth.get("users", [])
+    if len(users) <= 1:
+        flash("Can't delete the only remaining user.", "danger")
+        return redirect(url_for("users_page"))
+    if username == session.get("username"):
+        flash("You can't delete your own account while logged in as it.", "danger")
+        return redirect(url_for("users_page"))
+    auth["users"] = [u for u in users if u["username"] != username]
+    save_auth(auth)
+    log_activity("user_deleted", f"user={username}")
+    flash(f"User '{username}' deleted.", "success")
+    return redirect(url_for("users_page"))
+
+
+@app.route("/users/<username>/role", methods=["POST"])
+@require_admin
+def change_user_role(username):
+    new_role = request.form.get("role", "readonly")
+    if new_role not in ("admin", "readonly"):
+        new_role = "readonly"
+    auth = load_auth() or {"users": []}
+    admins = [u for u in auth.get("users", []) if u["role"] == "admin"]
+    if len(admins) == 1 and admins[0]["username"] == username and new_role != "admin":
+        flash("Can't demote the only remaining admin.", "danger")
+        return redirect(url_for("users_page"))
+    update_user(username, role=new_role)
+    log_activity("user_role_changed", f"user={username} role={new_role}")
+    flash(f"'{username}' is now {new_role}.", "success")
+    return redirect(url_for("users_page"))
+
+
+# ---------------------------------------------------------------------------
+# API tokens: a separate, opt-in mechanism from the browser session/CSRF
+# system above. Tokens are only usable against /api/v1/* routes, are shown
+# once at creation (only the hash is stored), and are exempt from the
+# session-login redirect and CSRF check since header-based bearer auth
+# isn't vulnerable to CSRF the way cookies are.
+# ---------------------------------------------------------------------------
+
+def load_api_tokens():
+    if not os.path.exists(API_TOKENS_PATH):
+        return {"tokens": []}
+    try:
+        with open(API_TOKENS_PATH, "r") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {"tokens": []}
+
+
+def save_api_tokens(data):
+    os.makedirs(os.path.dirname(API_TOKENS_PATH), exist_ok=True)
+    tmp = API_TOKENS_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, API_TOKENS_PATH)
+
+
+def list_api_tokens():
+    return load_api_tokens().get("tokens", [])
+
+
+def create_api_token(label, role="readonly"):
+    raw_token = "ddns_" + secrets.token_urlsafe(32)
+    data = load_api_tokens()
+    data.setdefault("tokens", []).append({
+        "label": label or "unnamed",
+        "token_hash": hashlib.sha256(raw_token.encode()).hexdigest(),
+        "role": role if role in ("admin", "readonly") else "readonly",
+        "created": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+    })
+    save_api_tokens(data)
+    return raw_token  # only time the raw value is ever available
+
+
+def revoke_api_token(label):
+    data = load_api_tokens()
+    data["tokens"] = [t for t in data.get("tokens", []) if t["label"] != label]
+    save_api_tokens(data)
+
+
+def verify_api_token(raw_token):
+    if not raw_token:
+        return None
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    for t in list_api_tokens():
+        if hmac.compare_digest(t["token_hash"], token_hash):
+            return t["role"]
+    return None
+
+
+def require_api_token(min_role="readonly"):
+    def decorator(view):
+        @wraps(view)
+        def wrapped(*args, **kwargs):
+            auth_header = request.headers.get("Authorization", "")
+            token = auth_header[7:] if auth_header.startswith("Bearer ") else request.headers.get("X-API-Key", "")
+            role = verify_api_token(token)
+            if role is None:
+                return {"error": "Missing or invalid API token."}, 401
+            if min_role == "admin" and role != "admin":
+                return {"error": "This action requires an admin-level API token."}, 403
+            return view(*args, **kwargs)
+        return wrapped
+    return decorator
+
+
+@app.route("/api/v1/status")
+@require_api_token()
+def api_status():
+    config = load_config()
+    return {"status": "ok", "record_count": len(config.get("settings", []))}
+
+
+@app.route("/api/v1/records", methods=["GET"])
+@require_api_token()
+def api_list_records():
+    config = load_config()
+    settings = config.get("settings", [])
+    updates_data = load_updates_raw()
+    out = []
+    for i, entry in enumerate(settings):
+        out.append({
+            "index": i,
+            "domain": entry.get("domain", ""),
+            "provider": entry.get("provider", ""),
+            "summary": summarize(entry),
+            "status": find_status_for_domain(updates_data, entry.get("domain", "")),
+        })
+    return {"records": out}
+
+
+@app.route("/api/v1/records", methods=["POST"])
+@require_api_token(min_role="admin")
+def api_add_record():
+    body = request.get_json(silent=True) or {}
+    provider = body.get("provider", "")
+    domain = body.get("domain", "")
+    if not provider or not domain:
+        return {"error": "'provider' and 'domain' are required."}, 400
+    if provider not in PROVIDER_SCHEMAS:
+        return {"error": f"Unknown provider '{provider}'. Use the Advanced tab / raw config for unsupported providers."}, 400
+
+    # Reuse build_entry's validation by adapting the JSON body into the same
+    # "<provider>__<field>" form-shaped dict build_entry expects.
+    fake_form = {}
+    for field in PROVIDER_SCHEMAS[provider]["fields"]:
+        key = f"{provider}__{field['name']}"
+        value = body.get(field["name"], "")
+        fake_form[key] = "on" if (field["type"] == "checkbox" and value) else str(value)
+
+    try:
+        entry = build_entry(provider, domain, fake_form, {})
+    except ValueError as e:
+        return {"error": str(e)}, 400
+
+    config = load_config()
+    config.setdefault("settings", []).append(entry)
+    save_config(config)
+    log_activity("record_added", f"domain={domain} provider={provider} (via API)")
+    return {"status": "created", "index": len(config["settings"]) - 1}, 201
+
+
+@app.route("/api/v1/records/<int:index>", methods=["DELETE"])
+@require_api_token(min_role="admin")
+def api_delete_record(index):
+    config = load_config()
+    settings = config.get("settings", [])
+    if not (0 <= index < len(settings)):
+        return {"error": "Record not found."}, 404
+    removed = settings.pop(index)
+    config["settings"] = settings
+    save_config(config)
+    log_activity("record_deleted", f"domain={removed.get('domain', 'unknown')} (via API)")
+    return {"status": "deleted"}
+
+
+# ---------------------------------------------------------------------------
+# API token management UI (admin only)
+# ---------------------------------------------------------------------------
+
+@app.route("/api-tokens", methods=["GET"])
+@require_admin
+def api_tokens_page():
+    return render_template("api_tokens.html", tokens=list_api_tokens(), new_token=session.pop("new_api_token", None))
+
+
+@app.route("/api-tokens/create", methods=["POST"])
+@require_admin
+def create_api_token_route():
+    label = request.form.get("label", "").strip()
+    role = request.form.get("role", "readonly")
+    if not label:
+        flash("A label is required so you can tell tokens apart later.", "danger")
+        return redirect(url_for("api_tokens_page"))
+    if any(t["label"] == label for t in list_api_tokens()):
+        flash(f"A token labeled '{label}' already exists.", "danger")
+        return redirect(url_for("api_tokens_page"))
+    raw_token = create_api_token(label, role)
+    session["new_api_token"] = raw_token
+    log_activity("api_token_created", f"label={label} role={role}")
+    flash("Token created -- copy it now, it won't be shown again.", "success")
+    return redirect(url_for("api_tokens_page"))
+
+
+@app.route("/api-tokens/<label>/revoke", methods=["POST"])
+@require_admin
+def revoke_api_token_route(label):
+    revoke_api_token(label)
+    log_activity("api_token_revoked", f"label={label}")
+    flash(f"Token '{label}' revoked.", "success")
+    return redirect(url_for("api_tokens_page"))
 
 
 # ---------------------------------------------------------------------------
@@ -835,12 +1325,17 @@ def index():
         backups=list_backups(),
         updates_raw=json.dumps(updates_data, indent=2) if updates_data else None,
         auth_configured=auth_configured(),
-        auth_is_gui=(gui_auth_configured() and not env_auth_configured()),
+        auth_is_gui=(session.get("auth_via") == "gui"),
+        current_role=current_role(),
+        current_username=session.get("username"),
+        is_admin=(current_role() == "admin" or not auth_configured()),
         activity=load_activity(),
+        api_tokens=list_api_tokens(),
     )
 
 
 @app.route("/records/save", methods=["POST"])
+@require_write
 def save_record():
     index_raw = request.form.get("index", "").strip()
     index = int(index_raw) if index_raw.isdigit() else None
@@ -899,6 +1394,7 @@ def test_record():
 
 
 @app.route("/records/<int:index>/delete", methods=["POST"])
+@require_write
 def delete_record(index):
     config = load_config()
     settings = config.get("settings", [])
@@ -914,6 +1410,7 @@ def delete_record(index):
 
 
 @app.route("/update", methods=["POST"])
+@require_write
 def update():
     raw = request.form.get("config", "")
     try:
@@ -931,6 +1428,7 @@ def update():
 
 
 @app.route("/backups/<filename>/restore", methods=["POST"])
+@require_write
 def restore_backup(filename):
     if not _BACKUP_NAME_RE.match(filename):
         flash("Invalid backup filename.", "danger")

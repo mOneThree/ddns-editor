@@ -50,6 +50,11 @@ services:
       # - LOGIN_LOCKOUT_THRESHOLD=5
       # - LOGIN_LOCKOUT_WINDOW_SECONDS=300
 
+      # Optional notification on record changes, logins, etc. WEBHOOK_FORMAT
+      # is "generic" (plain JSON), "discord", "slack", or "ntfy":
+      # - WEBHOOK_URL=https://ntfy.sh/your-topic-here
+      # - WEBHOOK_FORMAT=ntfy
+
       # Signs session/flash cookies -- set this if you want sessions to
       # survive a container restart instead of forcing a re-login:
       # - FLASK_SECRET_KEY=some-random-string
