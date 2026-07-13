@@ -6,24 +6,32 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.44.0/dist/tabler-icons.min.css">
     {% include '_shell_style.html' %}
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
 </head>
 <body style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--de-bg); padding: 2rem 0;">
     <div class="de-card" style="width: 480px; padding: 1.75rem;">
         <h1 class="h4 mb-2" style="font-weight: 600;">Set up two-factor authentication</h1>
-        <p class="text-muted">Add this to your authenticator app (Google Authenticator, Authy, 1Password, etc), then enter the current code below to confirm.</p>
+        <p class="text-muted">Scan this with your authenticator app (Google Authenticator, Authy, 1Password, etc), then enter the current code below to confirm.</p>
         {% if error %}
         <div class="alert alert-danger">{{ error }}</div>
         {% endif %}
 
-        <div class="mb-3">
-            <label class="form-label">Setup key (manual entry)</label>
-            <input type="text" class="form-control" value="{{ secret }}" readonly onclick="this.select()">
-            <div class="form-text">No QR scanning here yet -- choose "Enter setup key manually" in your authenticator app and paste this in. Account name: <code>DDNS Editor</code>.</div>
+        <div class="text-center mb-3">
+            <canvas id="qrCanvas" width="200" height="200" style="border-radius: var(--de-radius); border: 1px solid var(--de-border);"></canvas>
+            <p id="qrFallbackMsg" class="text-muted small mt-2" style="display: none;">Couldn't generate a QR code -- use the manual entry key below instead.</p>
         </div>
 
         <details class="mb-3">
-            <summary class="text-muted small">otpauth:// URI (some apps accept pasting this directly)</summary>
-            <input type="text" class="form-control form-control-sm mt-2" value="{{ uri }}" readonly onclick="this.select()">
+            <summary class="text-muted small">Can't scan? Enter the setup key manually</summary>
+            <div class="mt-2">
+                <label class="form-label">Setup key</label>
+                <input type="text" class="form-control" value="{{ secret }}" readonly onclick="this.select()">
+                <div class="form-text">Choose "Enter setup key manually" in your authenticator app and paste this in. Account name: <code>DDNS Editor</code>.</div>
+            </div>
+            <div class="mt-2">
+                <label class="form-label">otpauth:// URI</label>
+                <input type="text" class="form-control form-control-sm" value="{{ uri }}" readonly onclick="this.select()">
+            </div>
         </details>
 
         <form method="post">
@@ -37,5 +45,25 @@
         </form>
     </div>
     <div style="position: fixed; top: 1rem; right: 1rem;">{% include '_theme_toggle.html' %}</div>
+    <div style="position: fixed; bottom: 0.75rem; left: 0; right: 0; text-align: center;">
+        <span class="de-muted-line">DDNS Editor {{ app_version }}</span>
+    </div>
+    <script>
+        (function () {
+            var uri = {{ uri | tojson }};
+            var canvas = document.getElementById('qrCanvas');
+            if (typeof QRCode === 'undefined' || !canvas) {
+                document.getElementById('qrFallbackMsg').style.display = 'block';
+                if (canvas) canvas.style.display = 'none';
+                return;
+            }
+            QRCode.toCanvas(canvas, uri, { width: 200, margin: 1 }, function (err) {
+                if (err) {
+                    document.getElementById('qrFallbackMsg').style.display = 'block';
+                    canvas.style.display = 'none';
+                }
+            });
+        })();
+    </script>
 </body>
 </html>

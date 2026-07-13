@@ -74,6 +74,8 @@ jobs:
           load: true
           push: false
           tags: smoke-test:latest
+          build-args: |
+            APP_VERSION=${{ github.ref_name }}
 
       - name: Smoke test -- run container and hit /healthz
         run: |
@@ -102,3 +104,5 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            APP_VERSION=${{ github.ref_name }}

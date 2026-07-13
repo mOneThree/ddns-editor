@@ -11,26 +11,11 @@
     <div class="app-shell">
         {% include '_sidebar.html' %}
         <div class="app-content">
-    <div class="d-flex justify-content-between align-items-start">
-        <div>
-            <h1>DDNS Configuration Editor</h1>
-            <p class="text-muted">Manages ddns-updater's config.json. Update status/history below is best-effort -- for the full picture, see ddns-updater's own dashboard on port 8000.</p>
-        </div>
-        <div class="d-flex gap-2 align-items-start">
-            {% include '_theme_toggle.html' %}
-            {% if current_username %}
-            <span class="badge text-bg-light text-dark border align-self-center">{{ current_username }} ({{ current_role }})</span>
-            {% endif %}
-            {% if auth_is_gui %}
-            <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#changePasswordModal">Change Password</button>
-            {% endif %}
-            {% if auth_configured %}
-            <form method="post" action="{{ url_for('logout') }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-outline-secondary btn-sm">Log out</button>
-            </form>
-            {% endif %}
-        </div>
+    {% include '_account_menu.html' %}
+
+    <div class="mb-3">
+        <h1>DDNS Configuration Editor</h1>
+        <p class="text-muted mb-0">Manages ddns-updater's config.json. Update status/history below is best-effort -- for the full picture, see ddns-updater's own dashboard on port 8000.</p>
     </div>
 
     {% if not auth_configured %}
@@ -55,69 +40,7 @@
         </div>
     </div>
 
-    {% if auth_is_gui %}
-    <div class="modal fade" id="changePasswordModal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <form method="post" action="{{ url_for('change_password') }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="modal-header">
-                        <h5 class="modal-title">Change Password</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                    </div>
-                    <div class="modal-body">
-                        <div class="mb-3">
-                            <label class="form-label">Current password</label>
-                            <input type="password" class="form-control" name="current_password" required>
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label">New password</label>
-                            <input type="password" class="form-control" name="new_password" required>
-                            <div class="form-text">At least 8 characters.</div>
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label">Confirm new password</label>
-                            <input type="password" class="form-control" name="confirm_password" required>
-                        </div>
-                        <hr>
-                        <h6>Two-factor authentication</h6>
-                        <p class="text-muted small">Adds a second step (authenticator app code) at login.</p>
-                        <a href="{{ url_for('setup_2fa') }}" class="btn btn-outline-primary btn-sm">Set up 2FA</a>
-                        <button type="button" class="btn btn-outline-danger btn-sm" data-bs-toggle="modal" data-bs-target="#disable2faModal">Disable 2FA</button>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" class="btn btn-primary">Change Password</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <div class="modal fade" id="disable2faModal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <form method="post" action="{{ url_for('disable_2fa') }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="modal-header">
-                        <h5 class="modal-title">Disable two-factor authentication</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                    </div>
-                    <div class="modal-body">
-                        <div class="mb-3">
-                            <label class="form-label">Confirm your current password</label>
-                            <input type="password" class="form-control" name="current_password" required>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" class="btn btn-danger">Disable 2FA</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-    {% endif %}
+    {% include '_account_modals.html' %}
 
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
@@ -279,7 +202,7 @@
                 {% if is_editing %}
                 <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">Cancel</a>
                 {% endif %}
-                <button type="button" class="btn btn-outline-secondary" id="testConnectionBtn" style="display: none;" onclick="testConnection()">Test Connection</button>
+                <button type="button" class="btn btn-outline-warning" id="testConnectionBtn" style="display: none;" onclick="testConnection()">Test Connection</button>
                 <div id="testResult" class="mt-2"></div>
             </form>
         </div>
@@ -365,6 +288,8 @@
             {% endif %}
         </div>
     </div>
+
+    {% include '_footer.html' %}
         </div>
     </div>
 

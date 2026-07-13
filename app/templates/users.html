@@ -12,10 +12,10 @@
         {% include '_sidebar.html' %}
         <div class="app-content">
 
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <h1 class="h3 mb-0">Users</h1>
-                {% include '_theme_toggle.html' %}
-            </div>
+            {% include '_account_menu.html' %}
+            <h1 class="h3 mb-3">Users</h1>
+
+            {% include '_account_modals.html' %}
 
             {% with messages = get_flashed_messages(with_categories=true) %}
               {% for category, message in messages %}
@@ -70,6 +70,7 @@
             </form>
             <p class="text-muted small mt-2"><strong>admin</strong> can add/edit/delete records and manage users/tokens. <strong>readonly</strong> can view records, status, and activity, and run Test Connection, but can't save, delete, or restore anything.</p>
 
+            {% include '_footer.html' %}
         </div>
     </div>
 </body>

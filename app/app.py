@@ -241,6 +241,77 @@ def csrf_protect():
 # ---------------------------------------------------------------------------
 
 EDITOR_USERNAME = os.environ.get("EDITOR_USERNAME", "admin")
+
+# ---------------------------------------------------------------------------
+# Version + update check.
+#
+# APP_VERSION is set at Docker build time from the git tag being built (see
+# Dockerfile ARG/ENV and .github/workflows/docker-publish.yml), so it's
+# never manually typed/maintained. Falls back to "dev" for a plain local
+# `docker build` with no --build-arg.
+#
+# The update check is a simple, cached, best-effort call to GitHub's tags
+# API -- never blocks page loads (short timeout, silently no-ops on any
+# failure) and only runs once per UPDATE_CHECK_INTERVAL_SECONDS regardless
+# of how many requests come in during that window.
+# ---------------------------------------------------------------------------
+
+APP_VERSION = os.environ.get("APP_VERSION", "dev")
+UPDATE_CHECK_ENABLED = os.environ.get("UPDATE_CHECK_ENABLED", "true").lower() == "true"
+UPDATE_CHECK_REPO = os.environ.get("UPDATE_CHECK_REPO", "mOneThree/ddns-editor")
+UPDATE_CHECK_INTERVAL_SECONDS = int(os.environ.get("UPDATE_CHECK_INTERVAL_SECONDS", "3600"))
+
+_version_cache = {"latest": None, "checked_at": 0}
+
+
+def _parse_version(v):
+    """'v1.8.0' or '1.8.0' -> (1, 8, 0). Returns None if unparseable."""
+    if not v:
+        return None
+    v = v.strip().lstrip("vV")
+    parts = v.split(".")
+    try:
+        return tuple(int(p) for p in parts[:3])
+    except ValueError:
+        return None
+
+
+def _fetch_latest_tag():
+    url = f"https://api.github.com/repos/{UPDATE_CHECK_REPO}/tags"
+    req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "ddns-editor"})
+    with urllib.request.urlopen(req, timeout=4) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    best_str, best_tuple = None, None
+    for tag in data:
+        name = tag.get("name", "")
+        parsed = _parse_version(name)
+        if parsed and (best_tuple is None or parsed > best_tuple):
+            best_tuple, best_str = parsed, name
+    return best_str
+
+
+def get_latest_version_cached():
+    if not UPDATE_CHECK_ENABLED:
+        return None
+    now = time.time()
+    if now - _version_cache["checked_at"] < UPDATE_CHECK_INTERVAL_SECONDS:
+        return _version_cache["latest"]
+    try:
+        latest = _fetch_latest_tag()
+        _version_cache["latest"] = latest
+    except Exception:
+        pass  # keep whatever was cached before; a failed check is not an error to surface
+    _version_cache["checked_at"] = now
+    return _version_cache["latest"]
+
+
+def is_update_available():
+    current = _parse_version(APP_VERSION)
+    latest_str = get_latest_version_cached()
+    latest = _parse_version(latest_str)
+    if not current or not latest:
+        return False, None
+    return (latest > current), latest_str
 EDITOR_PASSWORD = os.environ.get("EDITOR_PASSWORD", "")
 
 
@@ -1056,11 +1127,7 @@ def disable_2fa():
 @require_admin
 def users_page():
     auth = load_auth() or {"users": []}
-    return render_template(
-        "users.html", users=auth.get("users", []), current_username=session.get("username"),
-        active_tab="users", auth_configured=auth_configured(), auth_is_gui=(session.get("auth_via") == "gui"),
-        current_role=current_role(), is_admin=True,
-    )
+    return render_template("users.html", users=auth.get("users", []), active_tab="users")
 
 
 @app.route("/users/add", methods=["POST"])
@@ -1279,8 +1346,7 @@ def api_delete_record(index):
 def api_tokens_page():
     return render_template(
         "api_tokens.html", tokens=list_api_tokens(), new_token=session.pop("new_api_token", None),
-        active_tab="apitokens", auth_configured=auth_configured(), auth_is_gui=(session.get("auth_via") == "gui"),
-        current_role=current_role(), current_username=session.get("username"), is_admin=True,
+        active_tab="apitokens",
     )
 
 
@@ -1309,6 +1375,24 @@ def revoke_api_token_route(label):
     log_activity("api_token_revoked", f"label={label}")
     flash(f"Token '{label}' revoked.", "success")
     return redirect(url_for("api_tokens_page"))
+
+
+@app.context_processor
+def inject_globals():
+    update_available, latest_version = is_update_available()
+    user = current_user()
+    return {
+        "app_version": APP_VERSION,
+        "update_available": update_available,
+        "latest_version": latest_version,
+        "current_username": session.get("username"),
+        "current_role": current_role(),
+        "is_admin": (current_role() == "admin" or not auth_configured()),
+        "auth_configured": auth_configured(),
+        "auth_is_gui": (session.get("auth_via") == "gui"),
+        "current_user_totp_enabled": bool(user.get("totp_enabled")) if user else False,
+        "update_check_repo": UPDATE_CHECK_REPO,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1364,11 +1448,6 @@ def index():
         is_supported_provider=(edit_provider in PROVIDER_SCHEMAS) if is_editing else True,
         backups=list_backups(),
         updates_raw=json.dumps(updates_data, indent=2) if updates_data else None,
-        auth_configured=auth_configured(),
-        auth_is_gui=(session.get("auth_via") == "gui"),
-        current_role=current_role(),
-        current_username=session.get("username"),
-        is_admin=(current_role() == "admin" or not auth_configured()),
         activity=load_activity(),
         api_tokens=list_api_tokens(),
         providers_count=providers_count,

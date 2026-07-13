@@ -25,6 +25,7 @@ def app_module(tmp_path, monkeypatch):
     monkeypatch.setenv("FLASK_SECRET_KEY", "test-secret")
     monkeypatch.delenv("EDITOR_PASSWORD", raising=False)
     monkeypatch.delenv("EDITOR_USERNAME", raising=False)
+    monkeypatch.setenv("UPDATE_CHECK_ENABLED", "false")
 
     import app as appmod
     importlib.reload(appmod)
@@ -711,3 +712,71 @@ def test_readonly_user_does_not_see_admin_sidebar_links(app_module, client):
     r = client2.get("/")
     assert b'href="/users"' not in r.data
     assert b'href="/api-tokens"' not in r.data
+
+
+# ---------------------------------------------------------------------------
+# Version parsing / update check
+# ---------------------------------------------------------------------------
+
+def test_parse_version_handles_v_prefix_and_plain(app_module):
+    assert app_module._parse_version("v1.8.0") == (1, 8, 0)
+    assert app_module._parse_version("1.8.0") == (1, 8, 0)
+    assert app_module._parse_version("v2.0") == (2, 0)
+    assert app_module._parse_version("dev") is None
+    assert app_module._parse_version("") is None
+    assert app_module._parse_version(None) is None
+
+
+def test_is_update_available_true_when_newer_tag_exists(app_module, monkeypatch):
+    monkeypatch.setattr(app_module, "APP_VERSION", "v1.7.0")
+    monkeypatch.setattr(app_module, "UPDATE_CHECK_ENABLED", True)
+    app_module._version_cache["latest"] = None
+    app_module._version_cache["checked_at"] = 0
+    with patch.object(app_module, "_fetch_latest_tag", return_value="v1.8.0"):
+        available, latest = app_module.is_update_available()
+    assert available is True
+    assert latest == "v1.8.0"
+
+
+def test_is_update_available_false_when_current_is_newest(app_module, monkeypatch):
+    monkeypatch.setattr(app_module, "APP_VERSION", "v1.8.0")
+    monkeypatch.setattr(app_module, "UPDATE_CHECK_ENABLED", True)
+    app_module._version_cache["latest"] = None
+    app_module._version_cache["checked_at"] = 0
+    with patch.object(app_module, "_fetch_latest_tag", return_value="v1.8.0"):
+        available, latest = app_module.is_update_available()
+    assert available is False
+
+
+def test_is_update_available_false_when_check_disabled(app_module, monkeypatch):
+    monkeypatch.setattr(app_module, "UPDATE_CHECK_ENABLED", False)
+    available, latest = app_module.is_update_available()
+    assert available is False
+    assert latest is None
+
+
+def test_is_update_available_false_when_fetch_fails(app_module, monkeypatch):
+    monkeypatch.setattr(app_module, "APP_VERSION", "v1.7.0")
+    monkeypatch.setattr(app_module, "UPDATE_CHECK_ENABLED", True)
+    app_module._version_cache["latest"] = None
+    app_module._version_cache["checked_at"] = 0
+    with patch.object(app_module, "_fetch_latest_tag", side_effect=Exception("network down")):
+        available, latest = app_module.is_update_available()
+    assert available is False
+
+
+def test_version_check_result_is_cached_not_refetched_every_call(app_module, monkeypatch):
+    monkeypatch.setattr(app_module, "UPDATE_CHECK_ENABLED", True)
+    app_module._version_cache["latest"] = None
+    app_module._version_cache["checked_at"] = 0
+    calls = {"n": 0}
+
+    def fake_fetch():
+        calls["n"] += 1
+        return "v9.9.9"
+
+    with patch.object(app_module, "_fetch_latest_tag", side_effect=fake_fetch):
+        app_module.get_latest_version_cached()
+        app_module.get_latest_version_cached()
+        app_module.get_latest_version_cached()
+    assert calls["n"] == 1  # only the first call actually hit the network

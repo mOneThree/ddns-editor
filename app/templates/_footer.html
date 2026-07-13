@@ -1,0 +1,11 @@
+<footer class="mt-4 pt-3 text-center" style="border-top: 1px solid var(--de-border);">
+    <span class="de-muted-line">
+        DDNS Editor {{ app_version }}
+        {% if update_available %}
+        <a href="https://github.com/{{ update_check_repo }}/releases" target="_blank" rel="noopener"
+           title="Update available: {{ latest_version }}" style="text-decoration: none; margin-left: 4px;">
+            <span style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--de-accent); vertical-align: middle; margin-right: 4px;"></span><span style="font-size: 0.8rem;">{{ latest_version }} available</span>
+        </a>
+        {% endif %}
+    </span>
+</footer>

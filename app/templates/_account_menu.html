@@ -1,0 +1,41 @@
+<div class="d-flex justify-content-end align-items-center gap-2 mb-3">
+    {% include '_theme_toggle.html' %}
+
+    {% if current_username %}
+    <div class="dropdown">
+        <button class="btn btn-outline-secondary btn-sm dropdown-toggle d-flex align-items-center gap-2" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false">
+            <i class="ti ti-user-circle" aria-hidden="true"></i>
+            <span>{{ current_username }}</span>
+            <span class="badge text-bg-secondary">{{ current_role }}</span>
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end">
+            {% if auth_is_gui %}
+            <li><button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#changePasswordModal">
+                <i class="ti ti-key" aria-hidden="true"></i> Change Password
+            </button></li>
+            {% if current_user_totp_enabled %}
+            <li><button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#disable2faModal">
+                <i class="ti ti-shield-off" aria-hidden="true"></i> Disable 2FA
+            </button></li>
+            {% else %}
+            <li><a class="dropdown-item" href="{{ url_for('setup_2fa') }}">
+                <i class="ti ti-shield-check" aria-hidden="true"></i> Enable 2FA
+            </a></li>
+            {% endif %}
+            <li><hr class="dropdown-divider"></li>
+            {% endif %}
+            {% if auth_configured %}
+            <li>
+                <form method="post" action="{{ url_for('logout') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="dropdown-item text-danger">
+                        <i class="ti ti-logout" aria-hidden="true"></i> Log out
+                    </button>
+                </form>
+            </li>
+            {% endif %}
+        </ul>
+    </div>
+    {% endif %}
+</div>
