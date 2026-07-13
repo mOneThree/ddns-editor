@@ -1,0 +1,36 @@
+<div class="app-sidebar">
+    <div class="app-sidebar-brand">DDNS Editor</div>
+
+    <a href="{{ url_for('index', tab='records') }}" class="sidebar-item {% if active_tab == 'records' %}active{% endif %}"
+       id="records-tab" data-bs-toggle="tab" data-bs-target="#records">
+        <i class="ti ti-list" aria-hidden="true"></i><span class="label">Records</span>
+        {% if records %}<span class="badge text-bg-secondary">{{ records|length }}</span>{% endif %}
+    </a>
+    <a href="{{ url_for('index', tab='add') }}" class="sidebar-item {% if active_tab == 'add' %}active{% endif %}"
+       id="add-tab" data-bs-toggle="tab" data-bs-target="#add">
+        <i class="ti ti-plus" aria-hidden="true"></i><span class="label">{% if is_editing %}Edit Record{% else %}Add Record{% endif %}</span>
+    </a>
+    <a href="{{ url_for('index', tab='advanced') }}" class="sidebar-item {% if active_tab == 'advanced' %}active{% endif %}"
+       id="advanced-tab" data-bs-toggle="tab" data-bs-target="#advanced">
+        <i class="ti ti-code" aria-hidden="true"></i><span class="label">Advanced</span>
+    </a>
+    <a href="{{ url_for('index', tab='backups') }}" class="sidebar-item {% if active_tab == 'backups' %}active{% endif %}"
+       id="backups-tab" data-bs-toggle="tab" data-bs-target="#backups">
+        <i class="ti ti-history" aria-hidden="true"></i><span class="label">Backups</span>
+        {% if backups %}<span class="badge text-bg-secondary">{{ backups|length }}</span>{% endif %}
+    </a>
+    <a href="{{ url_for('index', tab='activity') }}" class="sidebar-item {% if active_tab == 'activity' %}active{% endif %}"
+       id="activity-tab" data-bs-toggle="tab" data-bs-target="#activity">
+        <i class="ti ti-activity" aria-hidden="true"></i><span class="label">Activity</span>
+    </a>
+
+    {% if is_admin and auth_configured %}
+    <div class="sidebar-divider"></div>
+    <a href="{{ url_for('users_page') }}" class="sidebar-item {% if active_tab == 'users' %}active{% endif %}">
+        <i class="ti ti-users" aria-hidden="true"></i><span class="label">Users</span>
+    </a>
+    <a href="{{ url_for('api_tokens_page') }}" class="sidebar-item {% if active_tab == 'apitokens' %}active{% endif %}">
+        <i class="ti ti-key" aria-hidden="true"></i><span class="label">API Tokens</span>
+    </a>
+    {% endif %}
+</div>

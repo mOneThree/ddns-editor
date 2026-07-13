@@ -3,69 +3,70 @@
 <head>
     <title>DDNS Editor -- Users</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/dist/tabler-icons.min.css">
+    {% include '_shell_style.html' %}
 </head>
-<body class="container mt-5" style="max-width: 800px;">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h1 class="h3 mb-0">Users</h1>
-        <a href="{{ url_for('index') }}" class="btn btn-outline-secondary btn-sm">Back to editor</a>
+<body class="container mt-5" style="max-width: 1100px;">
+    <div class="app-shell">
+        {% include '_sidebar.html' %}
+        <div class="app-content">
+
+            <h1 class="h3 mb-3">Users</h1>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+              {% for category, message in messages %}
+                <div class="alert alert-{{ category }}">{{ message }}</div>
+              {% endfor %}
+            {% endwith %}
+
+            <div class="de-card mb-3" style="padding: 0.5rem;">
+                {% for u in users %}
+                <div class="de-row" style="margin-bottom: {% if not loop.last %}6px{% else %}0{% endif %};">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span style="font-weight: 500; font-size: 0.9rem;">{{ u.username }}</span>
+                        {% if u.username == current_username %}<span class="badge text-bg-secondary">you</span>{% endif %}
+                        {% if u.totp_enabled %}<span class="badge text-bg-success">2FA</span>{% endif %}
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <form action="{{ url_for('change_user_role', username=u.username) }}" method="post" class="d-inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <select name="role" class="form-select form-select-sm d-inline-block" style="width: auto;" onchange="this.form.submit()">
+                                <option value="admin" {% if u.role == 'admin' %}selected{% endif %}>admin</option>
+                                <option value="readonly" {% if u.role == 'readonly' %}selected{% endif %}>readonly</option>
+                            </select>
+                        </form>
+                        <form action="{{ url_for('delete_user', username=u.username) }}" method="post" class="d-inline"
+                              onsubmit="return confirm('Delete user {{ u.username }}?');">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-outline-danger" {% if u.username == current_username or users|length <= 1 %}disabled{% endif %}>Delete</button>
+                        </form>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <h5>Add a user</h5>
+            <form action="{{ url_for('add_user') }}" method="post" class="row g-2">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="col-md-4">
+                    <input type="text" class="form-control" name="username" placeholder="Username" required>
+                </div>
+                <div class="col-md-4">
+                    <input type="password" class="form-control" name="password" placeholder="Password (min. 8 characters)" required>
+                </div>
+                <div class="col-md-2">
+                    <select name="role" class="form-select">
+                        <option value="readonly">readonly</option>
+                        <option value="admin">admin</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-primary w-100">Add</button>
+                </div>
+            </form>
+            <p class="text-muted small mt-2"><strong>admin</strong> can add/edit/delete records and manage users/tokens. <strong>readonly</strong> can view records, status, and activity, and run Test Connection, but can't save, delete, or restore anything.</p>
+
+        </div>
     </div>
-
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% for category, message in messages %}
-        <div class="alert alert-{{ category }}">{{ message }}</div>
-      {% endfor %}
-    {% endwith %}
-
-    <table class="table table-hover align-middle">
-        <thead>
-            <tr><th>Username</th><th>Role</th><th>2FA</th><th class="text-end">Actions</th></tr>
-        </thead>
-        <tbody>
-            {% for u in users %}
-            <tr>
-                <td><code>{{ u.username }}</code>{% if u.username == current_username %} <span class="badge text-bg-secondary">you</span>{% endif %}</td>
-                <td>
-                    <form action="{{ url_for('change_user_role', username=u.username) }}" method="post" class="d-inline">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <select name="role" class="form-select form-select-sm d-inline-block" style="width: auto;" onchange="this.form.submit()">
-                            <option value="admin" {% if u.role == 'admin' %}selected{% endif %}>admin</option>
-                            <option value="readonly" {% if u.role == 'readonly' %}selected{% endif %}>readonly</option>
-                        </select>
-                    </form>
-                </td>
-                <td>{% if u.totp_enabled %}<span class="badge text-bg-success">enabled</span>{% else %}<span class="text-muted small">off</span>{% endif %}</td>
-                <td class="text-end">
-                    <form action="{{ url_for('delete_user', username=u.username) }}" method="post" class="d-inline"
-                          onsubmit="return confirm('Delete user {{ u.username }}?');">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-sm btn-outline-danger" {% if u.username == current_username or users|length <= 1 %}disabled{% endif %}>Delete</button>
-                    </form>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-
-    <hr>
-    <h5>Add a user</h5>
-    <form action="{{ url_for('add_user') }}" method="post" class="row g-2">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="col-md-4">
-            <input type="text" class="form-control" name="username" placeholder="Username" required>
-        </div>
-        <div class="col-md-4">
-            <input type="password" class="form-control" name="password" placeholder="Password (min. 8 characters)" required>
-        </div>
-        <div class="col-md-2">
-            <select name="role" class="form-select">
-                <option value="readonly">readonly</option>
-                <option value="admin">admin</option>
-            </select>
-        </div>
-        <div class="col-md-2">
-            <button type="submit" class="btn btn-primary w-100">Add</button>
-        </div>
-    </form>
-    <p class="text-muted small mt-2"><strong>admin</strong> can add/edit/delete records and manage users/tokens. <strong>readonly</strong> can view records, status, and activity, and run Test Connection, but can't save, delete, or restore anything.</p>
 </body>
 </html>

@@ -1039,7 +1039,11 @@ def disable_2fa():
 @require_admin
 def users_page():
     auth = load_auth() or {"users": []}
-    return render_template("users.html", users=auth.get("users", []), current_username=session.get("username"))
+    return render_template(
+        "users.html", users=auth.get("users", []), current_username=session.get("username"),
+        active_tab="users", auth_configured=auth_configured(), auth_is_gui=(session.get("auth_via") == "gui"),
+        current_role=current_role(), is_admin=True,
+    )
 
 
 @app.route("/users/add", methods=["POST"])
@@ -1256,7 +1260,11 @@ def api_delete_record(index):
 @app.route("/api-tokens", methods=["GET"])
 @require_admin
 def api_tokens_page():
-    return render_template("api_tokens.html", tokens=list_api_tokens(), new_token=session.pop("new_api_token", None))
+    return render_template(
+        "api_tokens.html", tokens=list_api_tokens(), new_token=session.pop("new_api_token", None),
+        active_tab="apitokens", auth_configured=auth_configured(), auth_is_gui=(session.get("auth_via") == "gui"),
+        current_role=current_role(), current_username=session.get("username"), is_admin=True,
+    )
 
 
 @app.route("/api-tokens/create", methods=["POST"])
@@ -1311,6 +1319,12 @@ def index():
         edit_entry, is_editing = settings[edit_index], True
     edit_provider = edit_entry.get("provider", "")
 
+    active_tab = request.args.get("tab", "records")
+    if active_tab not in ("records", "add", "advanced", "backups", "activity"):
+        active_tab = "records"
+    if is_editing:
+        active_tab = "add"  # editing always wins, regardless of ?tab=
+
     return render_template(
         "index.html",
         config=config,
@@ -1321,6 +1335,7 @@ def index():
         edit_entry=edit_entry,
         edit_provider=edit_provider,
         is_editing=is_editing,
+        active_tab=active_tab,
         is_supported_provider=(edit_provider in PROVIDER_SCHEMAS) if is_editing else True,
         backups=list_backups(),
         updates_raw=json.dumps(updates_data, indent=2) if updates_data else None,

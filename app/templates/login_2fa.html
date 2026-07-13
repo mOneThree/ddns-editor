@@ -3,20 +3,23 @@
 <head>
     <title>DDNS Editor -- Verification code</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    {% include '_shell_style.html' %}
 </head>
-<body class="container mt-5" style="max-width: 400px;">
-    <h1 class="h3 mb-4">Enter your verification code</h1>
-    <p class="text-muted">Open your authenticator app and enter the current 6-digit code.</p>
-    {% if error %}
-    <div class="alert alert-danger">{{ error }}</div>
-    {% endif %}
-    <form method="post">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="mb-3">
-            <label class="form-label">Code</label>
-            <input type="text" class="form-control" name="code" inputmode="numeric" pattern="[0-9]*" maxlength="6" autofocus autocomplete="one-time-code">
-        </div>
-        <button type="submit" class="btn btn-primary w-100">Verify</button>
-    </form>
+<body style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--de-bg);">
+    <div class="de-card" style="width: 380px; padding: 1.75rem;">
+        <h1 class="h4 mb-3" style="font-weight: 600;">Enter your verification code</h1>
+        <p class="text-muted">Open your authenticator app and enter the current 6-digit code.</p>
+        {% if error %}
+        <div class="alert alert-danger">{{ error }}</div>
+        {% endif %}
+        <form method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="mb-3">
+                <label class="form-label">Code</label>
+                <input type="text" class="form-control" name="code" inputmode="numeric" pattern="[0-9]*" maxlength="6" autofocus autocomplete="one-time-code">
+            </div>
+            <button type="submit" class="btn btn-primary w-100">Verify</button>
+        </form>
+    </div>
 </body>
 </html>

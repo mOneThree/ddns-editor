@@ -661,3 +661,52 @@ def test_webhook_not_sent_for_non_notify_actions(app_module, client, monkeypatch
     with patch("urllib.request.urlopen", side_effect=fake_urlopen):
         client.get("/")  # login_failed / non-notify path: just a GET, no activity at all
     assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# Sidebar shell / tab navigation
+# ---------------------------------------------------------------------------
+
+def test_tab_query_param_selects_active_pane(client):
+    add_record(client, "duckdns", "a.example.com", token="tok1")
+    r = client.get("/?tab=backups")
+    assert 'id="backups" role="tabpanel"'.encode() in r.data
+    # crude check the backups pane carries the active classes -- look for
+    # the pane opening tag with "show active" somewhere near "backups"
+    assert b'show active" id="backups"' in r.data
+
+
+def test_editing_forces_add_tab_regardless_of_tab_param(client):
+    add_record(client, "cloudflare", "cf.example.com", zone_identifier="z1", token="t1", ttl="300", proxied="on")
+    r = client.get("/?edit=0&tab=backups")
+    assert b'show active" id="add"' in r.data
+
+
+def test_all_main_pages_render_with_sidebar_shell(app_module, client):
+    setup_admin(client)
+    for path in ["/", "/?tab=add", "/?tab=advanced", "/?tab=backups", "/?tab=activity", "/users", "/api-tokens"]:
+        r = client.get(path)
+        assert r.status_code == 200, path
+        assert b'class="app-sidebar"' in r.data, path
+
+
+def test_standalone_auth_pages_have_no_sidebar(app_module, client):
+    setup_admin(client)
+    r = client.get("/account/2fa/setup")
+    assert b'class="app-sidebar"' not in r.data
+
+
+def test_readonly_user_does_not_see_admin_sidebar_links(app_module, client):
+    setup_admin(client)
+    r = client.get("/users")
+    token = get_csrf(r.data)
+    client.post("/users/add", data={"csrf_token": token, "username": "viewer", "password": "viewerpass1", "role": "readonly"})
+    client.post("/logout", data={"csrf_token": token})
+
+    client2 = app_module.app.test_client()
+    r = client2.get("/login")
+    token2 = get_csrf(r.data)
+    client2.post("/login", data={"csrf_token": token2, "username": "viewer", "password": "viewerpass1"})
+    r = client2.get("/")
+    assert b'href="/users"' not in r.data
+    assert b'href="/api-tokens"' not in r.data
