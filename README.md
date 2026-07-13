@@ -8,6 +8,7 @@ It's built to sit alongside `ddns-updater` in the same Docker Compose stack, sha
 ![Flask](https://img.shields.io/badge/flask-3.0-black)
 ![Docker](https://img.shields.io/badge/docker-multi--arch-2496ED)
 ![Tests](https://img.shields.io/badge/tests-pytest-green)
+![License](https://img.shields.io/badge/license-MIT-yellow)
 
 ---
 
@@ -187,4 +188,4 @@ Need a provider not listed? Use the **Advanced** tab to hand-write the JSON entr
 
 ## License
 
-*(add your license here, e.g. MIT)*
+MIT — see [`LICENSE`](LICENSE) for the full text.
