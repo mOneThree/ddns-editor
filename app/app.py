@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from functools import wraps
 
 from flask import Flask, render_template, request, redirect, url_for, flash, session
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 # Required for flash messages and login sessions. Falls back to a random
@@ -21,15 +22,60 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24).hex())
 CONFIG_PATH = "/updater/data/config.json"
 UPDATES_PATH = os.path.join(os.path.dirname(CONFIG_PATH), "updates.json")
 BACKUP_DIR = os.path.join(os.path.dirname(CONFIG_PATH), "backups")
+AUTH_PATH = os.path.join(os.path.dirname(CONFIG_PATH), "auth.json")
 MAX_BACKUPS = int(os.environ.get("MAX_BACKUPS", "10"))
 _BACKUP_NAME_RE = re.compile(r"^config-\d{8}T\d{6}Z\.json$")
 
-# Optional login. If EDITOR_PASSWORD isn't set, the editor stays open
-# (matches previous behavior, so existing deployments don't suddenly lock
-# themselves out) but shows a warning banner nudging the operator to set one.
+# ---------------------------------------------------------------------------
+# Authentication.
+#
+# Two independent ways to set a password, checked in this priority order:
+#
+#   1. EDITOR_PASSWORD environment variable ("env mode"). Set by the
+#      operator in docker-compose.yml. Always checked first -- it keeps
+#      working even after a GUI password is set, as a recovery credential
+#      in case the GUI password is forgotten.
+#   2. A password set through the app itself at /setup, stored as a salted
+#      hash in auth.json on the data volume ("gui mode"). This is the
+#      day-to-day password once set.
+#
+# If neither is set, the editor stays fully open (matches all previous
+# versions, so existing deployments never suddenly lock themselves out) --
+# the UI shows a banner nudging the operator to secure it either way.
+# ---------------------------------------------------------------------------
+
 EDITOR_USERNAME = os.environ.get("EDITOR_USERNAME", "admin")
 EDITOR_PASSWORD = os.environ.get("EDITOR_PASSWORD", "")
-AUTH_ENABLED = bool(EDITOR_PASSWORD)
+
+
+def load_auth():
+    if not os.path.exists(AUTH_PATH):
+        return None
+    try:
+        with open(AUTH_PATH, "r") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def save_auth(data):
+    os.makedirs(os.path.dirname(AUTH_PATH), exist_ok=True)
+    tmp = AUTH_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, AUTH_PATH)
+
+
+def env_auth_configured():
+    return bool(EDITOR_PASSWORD)
+
+
+def gui_auth_configured():
+    return load_auth() is not None
+
+
+def auth_configured():
+    return env_auth_configured() or gui_auth_configured()
 
 
 # ---------------------------------------------------------------------------
@@ -473,10 +519,23 @@ def _extract_test_fields(provider, form, existing):
 
 @app.before_request
 def require_login():
-    if not AUTH_ENABLED:
+    if request.endpoint in ("healthz", "static"):
         return
-    if request.endpoint in ("login", "healthz", "static"):
+
+    if not auth_configured():
+        # Nothing set anywhere -- stay fully open (backward compatible).
+        # /setup is still reachable so the operator can turn auth on.
         return
+
+    if request.endpoint == "login":
+        return
+
+    if request.endpoint == "setup":
+        # Always defer to the view itself -- it already redirects (with an
+        # explanatory flash) once something's configured, so a second
+        # identity can't be created here.
+        return
+
     if not session.get("logged_in"):
         return redirect(url_for("login", next=request.path))
 
@@ -487,19 +546,89 @@ def login():
     if request.method == "POST":
         username = request.form.get("username", "")
         password = request.form.get("password", "")
-        valid = hmac.compare_digest(username, EDITOR_USERNAME) and hmac.compare_digest(password, EDITOR_PASSWORD)
+        valid = False
+
+        if EDITOR_PASSWORD:
+            valid = hmac.compare_digest(username, EDITOR_USERNAME) and hmac.compare_digest(password, EDITOR_PASSWORD)
+
+        if not valid:
+            auth_data = load_auth()
+            if auth_data:
+                stored_user = auth_data.get("username", "admin")
+                valid = hmac.compare_digest(username, stored_user) and check_password_hash(
+                    auth_data.get("password_hash", ""), password
+                )
+
         if valid:
             session["logged_in"] = True
             return redirect(request.form.get("next") or url_for("index"))
         time.sleep(1)  # basic throttle against brute-force attempts
         error = "Invalid username or password."
-    return render_template("login.html", error=error, next=request.args.get("next", ""))
+
+    return render_template(
+        "login.html",
+        error=error,
+        next=request.args.get("next", ""),
+        setup_available=(not env_auth_configured() and not gui_auth_configured()),
+    )
 
 
 @app.route("/logout", methods=["POST"])
 def logout():
     session.clear()
     return redirect(url_for("login"))
+
+
+@app.route("/setup", methods=["GET", "POST"])
+def setup():
+    if env_auth_configured():
+        flash("A password is already set via the EDITOR_PASSWORD environment variable.", "info")
+        return redirect(url_for("login"))
+    if gui_auth_configured():
+        return redirect(url_for("login"))
+
+    error = None
+    if request.method == "POST":
+        username = request.form.get("username", "").strip() or "admin"
+        password = request.form.get("password", "")
+        confirm = request.form.get("confirm", "")
+        if len(password) < 8:
+            error = "Password must be at least 8 characters."
+        elif password != confirm:
+            error = "Passwords do not match."
+        else:
+            save_auth({"username": username, "password_hash": generate_password_hash(password)})
+            session["logged_in"] = True
+            flash("Password set -- you're now logged in.", "success")
+            return redirect(url_for("index"))
+
+    return render_template("setup.html", error=error)
+
+
+@app.route("/account/change-password", methods=["POST"])
+def change_password():
+    if env_auth_configured():
+        flash("Password is managed via the EDITOR_PASSWORD environment variable; unset it to manage the password from here instead.", "danger")
+        return redirect(url_for("index"))
+
+    auth_data = load_auth()
+    current = request.form.get("current_password", "")
+    new = request.form.get("new_password", "")
+    confirm = request.form.get("confirm_password", "")
+
+    if not auth_data or not check_password_hash(auth_data.get("password_hash", ""), current):
+        flash("Current password is incorrect.", "danger")
+        return redirect(url_for("index"))
+    if len(new) < 8:
+        flash("New password must be at least 8 characters.", "danger")
+        return redirect(url_for("index"))
+    if new != confirm:
+        flash("New passwords do not match.", "danger")
+        return redirect(url_for("index"))
+
+    save_auth({"username": auth_data.get("username", "admin"), "password_hash": generate_password_hash(new)})
+    flash("Password changed successfully.", "success")
+    return redirect(url_for("index"))
 
 
 # ---------------------------------------------------------------------------
@@ -540,7 +669,8 @@ def index():
         is_supported_provider=(edit_provider in PROVIDER_SCHEMAS) if is_editing else True,
         backups=list_backups(),
         updates_raw=json.dumps(updates_data, indent=2) if updates_data else None,
-        auth_enabled=AUTH_ENABLED,
+        auth_configured=auth_configured(),
+        auth_is_gui=(gui_auth_configured() and not env_auth_configured()),
     )
 
 

@@ -6,6 +6,11 @@
 </head>
 <body class="container mt-5" style="max-width: 400px;">
     <h1 class="h3 mb-4">DDNS Editor</h1>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
     {% if error %}
     <div class="alert alert-danger">{{ error }}</div>
     {% endif %}
@@ -21,5 +26,8 @@
         </div>
         <button type="submit" class="btn btn-primary w-100">Log in</button>
     </form>
+    {% if setup_available %}
+    <p class="text-center mt-3 text-muted small">No password set yet -- <a href="{{ url_for('setup') }}">create one</a>.</p>
+    {% endif %}
 </body>
 </html>

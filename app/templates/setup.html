@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DDNS Editor -- Set up a password</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+</head>
+<body class="container mt-5" style="max-width: 420px;">
+    <h1 class="h3 mb-2">Secure this editor</h1>
+    <p class="text-muted">Anyone who can reach this page can currently view and edit your DNS records and tokens. Set a password to require a login from now on.</p>
+    {% if error %}
+    <div class="alert alert-danger">{{ error }}</div>
+    {% endif %}
+    <form method="post">
+        <div class="mb-3">
+            <label class="form-label">Username</label>
+            <input type="text" class="form-control" name="username" value="admin">
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Password</label>
+            <input type="password" class="form-control" name="password" autofocus>
+            <div class="form-text">At least 8 characters.</div>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Confirm password</label>
+            <input type="password" class="form-control" name="confirm">
+        </div>
+        <button type="submit" class="btn btn-primary w-100">Set password and log in</button>
+    </form>
+    <p class="text-center mt-3 text-muted small"><a href="{{ url_for('index') }}">Skip for now</a></p>
+</body>
+</html>
