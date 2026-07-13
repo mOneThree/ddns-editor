@@ -15,18 +15,44 @@ services:
       - homelab_network
 
   ddns-editor:
-    # Pulled from Docker Hub, no local build context needed on the deploy
-    # host. Replace "yourusername" with your actual Docker Hub namespace.
     image: mthirteenz/ddns-editor:latest
     # To build locally from source instead (e.g. while developing), swap
     # the "image:" line above for:
-    #   build: ../../ddns-editor
+    #   build: .
     container_name: ddns-editor
     restart: unless-stopped
     ports:
       - "5001:5000"
     volumes:
       - ./data:/updater/data
+    environment:
+      # Number of automatic config.json backups to keep (this line just
+      # keeps the block valid YAML while everything else below is
+      # commented out -- 10 is also the built-in default, so it's a no-op
+      # until you change the number):
+      - MAX_BACKUPS=10
+
+      # All optional -- see README.md "Configuration" section for details.
+      # Uncomment to require a login (also works as a permanent recovery
+      # credential alongside a password set through the app's own /setup page):
+      # - EDITOR_USERNAME=admin
+      # - EDITOR_PASSWORD=change-me
+
+      # Only enable once this is actually served over HTTPS (e.g. via
+      # docs/REVERSE_PROXY.md) -- enabling too early breaks login entirely:
+      # - SESSION_COOKIE_SECURE=true
+
+      # Only enable if a trusted reverse proxy sets X-Forwarded-For --
+      # otherwise the login lockout below can be bypassed by spoofing it:
+      # - TRUST_PROXY_HEADERS=true
+
+      # Login lockout tuning (defaults shown):
+      # - LOGIN_LOCKOUT_THRESHOLD=5
+      # - LOGIN_LOCKOUT_WINDOW_SECONDS=300
+
+      # Signs session/flash cookies -- set this if you want sessions to
+      # survive a container restart instead of forcing a re-login:
+      # - FLASK_SECRET_KEY=some-random-string
     depends_on:
       - ddns-updater
     networks:
