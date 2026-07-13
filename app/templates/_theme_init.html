@@ -1,0 +1,7 @@
+<script>
+    (function () {
+        var saved = localStorage.getItem('ddns-editor-theme');
+        var theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.setAttribute('data-bs-theme', theme);
+    })();
+</script>

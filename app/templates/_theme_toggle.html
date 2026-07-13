@@ -1,0 +1,19 @@
+<button type="button" class="theme-toggle-btn" onclick="toggleTheme()" title="Toggle dark mode" id="themeToggleBtn">
+    <i class="ti ti-moon" id="themeToggleIcon" aria-hidden="true"></i>
+</button>
+<script>
+    function updateThemeIcon() {
+        var icon = document.getElementById('themeToggleIcon');
+        if (!icon) return;
+        var isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+        icon.className = isDark ? 'ti ti-sun' : 'ti ti-moon';
+    }
+    function toggleTheme() {
+        var current = document.documentElement.getAttribute('data-bs-theme');
+        var next = current === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-bs-theme', next);
+        localStorage.setItem('ddns-editor-theme', next);
+        updateThemeIcon();
+    }
+    updateThemeIcon();
+</script>

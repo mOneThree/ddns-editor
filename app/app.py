@@ -693,15 +693,31 @@ def load_updates_raw():
         return None
 
 
-def _format_time(value):
+def _parse_time_value(value):
     try:
         if isinstance(value, (int, float)):
-            dt = datetime.fromtimestamp(value, tz=timezone.utc)
-        else:
-            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        return dt.strftime("%Y-%m-%d %H:%M UTC")
+            return datetime.fromtimestamp(value, tz=timezone.utc)
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except Exception:
-        return str(value)
+        return None
+
+
+def _format_time(value):
+    dt = _parse_time_value(value)
+    return dt.strftime("%Y-%m-%d %H:%M UTC") if dt else str(value)
+
+
+def _relative_time(dt):
+    seconds = max(0, int((datetime.now(timezone.utc) - dt).total_seconds()))
+    if seconds < 60:
+        return "just now"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    return f"{hours // 24}d ago"
 
 
 def find_status_for_domain(updates_data, domain):
@@ -720,6 +736,7 @@ def find_status_for_domain(updates_data, domain):
                 if ip_val or time_val:
                     found["ip"] = ip_val
                     found["time"] = _format_time(time_val) if time_val else None
+                    found["time_dt"] = _parse_time_value(time_val) if time_val else None
                     return
             for v in node.values():
                 walk(v)
@@ -1319,6 +1336,14 @@ def index():
         edit_entry, is_editing = settings[edit_index], True
     edit_provider = edit_entry.get("provider", "")
 
+    providers_count = len({r["entry"].get("provider") for r in records if r["entry"].get("provider")})
+    most_recent_dt = None
+    for r in records:
+        dt = r["status"].get("time_dt") if r["status"] else None
+        if dt and (most_recent_dt is None or dt > most_recent_dt):
+            most_recent_dt = dt
+    updated_summary = _relative_time(most_recent_dt) if most_recent_dt else "Never"
+
     active_tab = request.args.get("tab", "records")
     if active_tab not in ("records", "add", "advanced", "backups", "activity"):
         active_tab = "records"
@@ -1346,6 +1371,8 @@ def index():
         is_admin=(current_role() == "admin" or not auth_configured()),
         activity=load_activity(),
         api_tokens=list_api_tokens(),
+        providers_count=providers_count,
+        updated_summary=updated_summary,
     )
 
 
