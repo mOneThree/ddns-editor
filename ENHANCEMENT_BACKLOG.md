@@ -19,5 +19,9 @@ For the provider-schema backlog specifically, see `PROVIDER_BACKLOG.md`.
 ## Data integrity
 - [ ] JSON Schema validation on the Advanced tab -- catch structural mistakes beyond "is it valid JSON" (missing `provider` key, duplicate domains) before saving
 
+## Visual design
+- [ ] Interface redesign -- see mockup options presented separately; once a direction is picked, apply it across all pages including the ones added in this backlog (Users, API Tokens, 2FA setup)
+- [ ] Dark mode toggle
+
 ## Notes
-Nothing here is prioritized relative to anything else -- just captured so it's available when there's appetite to pick one up. Multi-user/roles/2FA, the token-based API + webhooks, the interface redesign (sidebar nav, blue/dark theme, card layouts), and version tracking/update notifications (previously listed here) have since been built; see README.md.
+Nothing here is prioritized relative to anything else -- just captured so it's available when there's appetite to pick one up. Multi-user/roles/2FA and the token-based API + webhooks (previously listed here) have since been built; see README.md.

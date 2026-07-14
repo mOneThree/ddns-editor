@@ -21,9 +21,7 @@ It's built to sit alongside `ddns-updater` in the same Docker Compose stack, sha
 - **Automatic backups** — every save backs up the previous `config.json` first (kept last 10, configurable), with one-click **Restore** and **Download** per backup.
 - **Optional login** — set up a password through the app itself (`/setup`) or via an `EDITOR_PASSWORD` env var (which also works as a permanent recovery credential alongside GUI-managed users). Includes login lockout after repeated failures and secure session cookie flags.
 - **Multi-user accounts with roles** — add additional users (admin or read-only) from the Users page; read-only accounts can view records/status/activity and run Test Connection, but can't save, delete, or restore anything.
-- **Two-factor authentication (TOTP)** — optional per-user, self-service setup via any standard authenticator app, with a scannable QR code (manual key entry also available as a fallback).
-- **Account menu** — click your username to Change Password, enable/disable 2FA, or Log out, all in one place. Dark mode toggle available everywhere, including the login screen.
-- **Version footer** — shows the running version (set automatically from the git tag at build time) with a subtle indicator when a newer release is available on GitHub.
+- **Two-factor authentication (TOTP)** — optional per-user, self-service setup via any standard authenticator app.
 - **Token-based API** — create scoped API tokens (admin or read-only) for scripts/automation to list, add, or delete records via `GET/POST /api/v1/records` without a browser session.
 - **Webhook notifications** — optional `WEBHOOK_URL` (generic JSON, Discord, Slack, or ntfy format) pings on record changes, backup restores, logins, and account/token changes.
 - **CSRF protection** on every state-changing action.
@@ -99,10 +97,6 @@ Then open **http://localhost:5001**. If you haven't set a password yet, you'll s
 | `LOGIN_LOCKOUT_WINDOW_SECONDS` | No | `300` | Lockout window length, in seconds. |
 | `WEBHOOK_URL` | No | unset | If set, POSTs a notification here on record changes, backup restores, logins, and account/token management events. |
 | `WEBHOOK_FORMAT` | No | `generic` | Payload shape for `WEBHOOK_URL`: `generic` (plain JSON), `discord`, `slack`, or `ntfy`. |
-| `APP_VERSION` | No (set automatically) | `dev` | Baked in at Docker build time from the git tag being built -- shown in the footer. Only needs setting manually for a plain local `docker build`. |
-| `UPDATE_CHECK_ENABLED` | No | `true` | Checks GitHub for a newer tag periodically and shows a subtle dot next to the version in the footer. Set to `false` to disable entirely (e.g. air-gapped deployments). |
-| `UPDATE_CHECK_REPO` | No | `mOneThree/ddns-editor` | Which GitHub repo to check for newer tags. |
-| `UPDATE_CHECK_INTERVAL_SECONDS` | No | `3600` | How often to re-check for a newer version. |
 
 | Volume | Purpose |
 |---|---|
@@ -167,16 +161,9 @@ git push origin v1.7.0
     │   ├── login.html
     │   ├── login_2fa.html
     │   ├── setup.html
-    │   ├── setup_2fa.html     # includes QR code generation
+    │   ├── setup_2fa.html
     │   ├── users.html         # admin-only user management
-    │   ├── api_tokens.html    # admin-only API token management
-    │   ├── _sidebar.html      # shared nav, desktop sidebar / mobile icon bar
-    │   ├── _account_menu.html # username dropdown: change password / 2FA / log out
-    │   ├── _account_modals.html
-    │   ├── _theme_init.html   # sets light/dark before first paint
-    │   ├── _theme_toggle.html
-    │   ├── _footer.html       # version + update-available indicator
-    │   └── _shell_style.html  # shared design tokens/CSS
+    │   └── api_tokens.html    # admin-only API token management
     └── static/
 ```
 

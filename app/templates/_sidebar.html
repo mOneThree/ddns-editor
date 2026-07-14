@@ -28,4 +28,15 @@
         <i class="ti ti-key" aria-hidden="true"></i><span class="label">API Tokens</span>
     </a>
     {% endif %}
+
+    <div style="flex: 1;"></div>
+    <div class="de-version-footer">
+        v{{ app_version }}
+        {% if update_available %}
+        <a href="https://github.com/{{ update_check_repo }}/releases" target="_blank" rel="noopener"
+           title="Update available: {{ latest_version }}">
+            <span style="display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--de-accent); margin-left: 4px; vertical-align: 1px;"></span>
+        </a>
+        {% endif %}
+    </div>
 </div>

@@ -129,20 +129,31 @@
     .de-stat-card { background: var(--de-surface); border: 1px solid var(--de-border); border-radius: var(--de-radius-lg); padding: 0.75rem 1rem; }
     .de-stat-value { font-size: 1.4rem; font-weight: 600; color: var(--de-text); line-height: 1.2; }
 
-    /* Theme toggle */
-    .theme-toggle-btn {
-        display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px;
-        border-radius: var(--de-radius); border: 1px solid var(--de-border-strong); background: transparent;
-        color: var(--de-text-secondary); cursor: pointer; font-size: 16px;
+    /* Borderless icon buttons (theme toggle) and avatar buttons (account menu) */
+    .de-icon-btn {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 32px; height: 32px; border-radius: 50%; border: none; background: transparent;
+        color: var(--de-text-secondary); cursor: pointer; font-size: 16px; padding: 0;
     }
-    .theme-toggle-btn:hover { background: var(--de-bg); color: var(--de-text); }
+    .de-icon-btn:hover { background: var(--de-bg); color: var(--de-text); }
+    .de-avatar-btn {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 32px; height: 32px; border-radius: 50%; border: none;
+        background: var(--de-accent-bg); color: var(--de-accent-strong);
+        font-size: 13px; font-weight: 500; cursor: pointer; padding: 0;
+    }
+    .de-avatar-btn:hover { background: var(--de-accent); color: #fff; }
+    .de-avatar-btn.dropdown-toggle::after { display: none; }
+
+    /* Sidebar version footer -- tiny, muted, tucked at the bottom */
+    .de-version-footer { font-size: 0.68rem; color: var(--de-text-muted); padding: 6px 10px 2px; margin-top: auto; }
+    .de-version-footer a { color: inherit; }
 
     /* App shell / sidebar */
-    .app-shell { display: flex; align-items: flex-start; gap: 0; }
+    .app-shell { display: flex; align-items: stretch; gap: 0; min-height: calc(100vh - 140px); }
     .app-sidebar {
         width: 190px; flex-shrink: 0; display: flex; flex-direction: column; gap: 2px;
         padding-right: 0.75rem; border-right: 1px solid var(--de-border); margin-right: 1.75rem;
-        position: sticky; top: 1rem;
     }
     .app-sidebar-brand { font-weight: 600; font-size: 1.05rem; padding: 0.25rem 0.6rem 1rem; color: var(--de-text); }
     .sidebar-item {
@@ -157,7 +168,7 @@
     .app-content { flex: 1; min-width: 0; }
 
     @media (max-width: 768px) {
-        .app-shell { flex-direction: column; }
+        .app-shell { flex-direction: column; min-height: 0; }
         .app-sidebar {
             width: 100%; flex-direction: row; overflow-x: auto; border-right: none;
             border-bottom: 1px solid var(--de-border); margin-right: 0; margin-bottom: 1.25rem;
@@ -172,5 +183,6 @@
         .sidebar-item .badge { margin-left: 0; }
         .sidebar-divider { width: 1px; height: 24px; margin: 4px 6px; align-self: center; }
         .de-stats-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        .de-version-footer { display: none; }
     }
 </style>

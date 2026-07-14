@@ -1,15 +1,14 @@
-<div class="d-flex justify-content-end align-items-center gap-2 mb-3">
+<div class="d-flex gap-1 align-items-center">
     {% include '_theme_toggle.html' %}
 
     {% if current_username %}
     <div class="dropdown">
-        <button class="btn btn-outline-secondary btn-sm dropdown-toggle d-flex align-items-center gap-2" type="button"
-                data-bs-toggle="dropdown" aria-expanded="false">
-            <i class="ti ti-user-circle" aria-hidden="true"></i>
-            <span>{{ current_username }}</span>
-            <span class="badge text-bg-secondary">{{ current_role }}</span>
+        <button class="de-avatar-btn dropdown-toggle" type="button" data-bs-toggle="dropdown"
+                aria-expanded="false" title="{{ current_username }} ({{ current_role }})">
+            {{ current_username[0]|upper }}
         </button>
         <ul class="dropdown-menu dropdown-menu-end">
+            <li><h6 class="dropdown-header">{{ current_username }} &middot; {{ current_role }}</h6></li>
             {% if auth_is_gui %}
             <li><button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#changePasswordModal">
                 <i class="ti ti-key" aria-hidden="true"></i> Change Password
