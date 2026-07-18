@@ -2,7 +2,7 @@
 
 ### *A modern web UI for qdm12/ddns-updater*
 
-![Pre-Alpha](https://img.shields.io/badge/status-%F0%9F%9A%A7%20Pre--Alpha-orange) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Flask](https://img.shields.io/badge/flask-3.0-black) ![Docker](https://img.shields.io/badge/docker-multi--arch-2496ED) ![Tests](https://img.shields.io/badge/tests-pytest-green) ![License](https://img.shields.io/badge/license-Unlicense-brightgreen)
+![Pre-Alpha](https://img.shields.io/badge/status-%F0%9F%9A%A7%20Pre--Alpha-orange) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Flask](https://img.shields.io/badge/flask-3.0-black) ![Docker](https://img.shields.io/badge/docker-multi--arch-2496ED) ![Tests](https://img.shields.io/badge/tests-pytest-green) ![License](https://img.shields.io/badge/license-Unlicense-brightgreen) ![Maintained](https://img.shields.io/badge/maintained-semi--maintained-yellow)
 
 **Manage DNS records, providers, and tokens without hand-editing JSON over SSH**
 
