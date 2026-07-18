@@ -2,7 +2,7 @@
 
 ### *A modern web UI for qdm12/ddns-updater*
 
-![Pre-Alpha](https://img.shields.io/badge/status-%F0%9F%9A%A7%20Pre--Alpha-orange) [Python](https://www.python.org/) [Flask](https://flask.palletsprojects.com/) [Docker](https://www.docker.com/) [Tests](https://github.com/mOneThree/ddns-editor/actions) [License](https://github.com/mOneThree/ddns-editor/blob/main/LICENSE)
+![Pre-Alpha](https://img.shields.io/badge/status-%F0%9F%9A%A7%20Pre--Alpha-orange) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Flask](https://img.shields.io/badge/flask-3.0-black) ![Docker](https://img.shields.io/badge/docker-multi--arch-2496ED) ![Tests](https://img.shields.io/badge/tests-pytest-green) ![License](https://img.shields.io/badge/license-Unlicense-brightgreen)
 
 **Manage DNS records, providers, and tokens without hand-editing JSON over SSH**
 
@@ -206,6 +206,6 @@ This repo ships a GitHub Actions workflow that runs the test suite, then a post-
 
 ## 📜 License
 
-MIT — see [`LICENSE`](LICENSE) for the full text.
+Unlicense — This project is released into the public domain. See [`LICENSE`](LICENSE) for the full text.
 
 ### ⭐ If you find DDNS Editor helpful, please star this repository!
